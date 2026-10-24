@@ -4,11 +4,12 @@ import { Navbar } from './components/Navbar';
 import { ToastContainer } from './components/ToastContainer';
 import { Landing } from './pages/Landing';
 import { Lobby } from './pages/Lobby';
+import { GameScreen } from './pages/GameScreen';
 
 const MainContent: React.FC = () => {
   const { state, leaveRoom, removeToast } = useGame();
 
-  // Listen to popstate (e.g. user hits back button)
+  // Handle browser back button (popstate)
   useEffect(() => {
     const handlePopState = () => {
       if (window.location.pathname === '/' && state.roomId) {
@@ -19,6 +20,17 @@ const MainContent: React.FC = () => {
     return () => window.removeEventListener('popstate', handlePopState);
   }, [state.roomId, leaveRoom]);
 
+  // Page selection based on room and phase (PRD Section 14)
+  const renderCurrentPage = () => {
+    if (!state.roomId) {
+      return <Landing />;
+    }
+    if (state.phase === 'DRAWING') {
+      return <GameScreen />;
+    }
+    return <Lobby />;
+  };
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Navbar
@@ -26,9 +38,7 @@ const MainContent: React.FC = () => {
         onHomeClick={state.roomId ? leaveRoom : undefined}
       />
 
-      <main style={{ flex: 1 }}>
-        {state.roomId ? <Lobby /> : <Landing />}
-      </main>
+      <main style={{ flex: 1 }}>{renderCurrentPage()}</main>
 
       <ToastContainer toasts={state.toasts} onDismiss={removeToast} />
 

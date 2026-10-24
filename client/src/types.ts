@@ -1,4 +1,4 @@
-// Client types matching server contract (PRD Section 4.6, 16.1)
+// Client types matching server contract (PRD Section 4.6, 9, 16.1, 16.3)
 
 export type WordMode = 'Normal' | 'Hidden';
 
@@ -56,4 +56,54 @@ export interface ToastMessage {
   id: string;
   type: 'error' | 'success' | 'info';
   message: string;
+}
+
+// 12 Drawing Palette Colors from PRD Section 19.1
+export const PALETTE_COLORS = [
+  '#1E1B2E', // Black / Ink
+  '#FFFFFF', // White / Canvas background
+  '#E5484D', // Red
+  '#FF8A3D', // Orange
+  '#FFD23F', // Yellow
+  '#2ED3A3', // Mint
+  '#1FB86B', // Green
+  '#4C6FFF', // Blue
+  '#8E5CFF', // Purple
+  '#FF7EB6', // Pink
+  '#8B5E3C', // Brown
+  '#9AA0A6', // Gray
+] as const;
+
+export const BRUSH_SIZES = [4, 10, 20] as const;
+export type BrushSize = (typeof BRUSH_SIZES)[number];
+export type DrawingTool = 'brush' | 'eraser';
+
+// Logical canvas dimensions (PRD Section 9)
+export const CANVAS_LOGICAL_WIDTH = 800;
+export const CANVAS_LOGICAL_HEIGHT = 600;
+
+// Normalized point coordinates [0, 1]
+export interface Point {
+  x: number;
+  y: number;
+}
+
+// Full stroke representation for client and server sync
+export interface Stroke {
+  id: string;
+  tool: DrawingTool;
+  color: string;
+  size: number;
+  points: Point[];
+}
+
+// Real-time draw event payload
+export interface DrawDataPayload {
+  type: 'start' | 'move' | 'end';
+  strokeId: string;
+  x?: number;
+  y?: number;
+  color?: string;
+  size?: number;
+  tool?: DrawingTool;
 }

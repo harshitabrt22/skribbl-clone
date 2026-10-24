@@ -1,4 +1,4 @@
-// React Context for Doodle Dash multiplayer state (PRD Section 8, 14, 16.1)
+// React Context for Doodle Dash multiplayer state (PRD Section 8, 9, 14, 16.1, 16.3)
 
 import React, { createContext, useContext, useEffect, useReducer, ReactNode } from 'react';
 import { socket } from '../socket';
@@ -15,6 +15,7 @@ interface GameState {
   you: You | null;
   players: PublicPlayer[];
   hostId: string | null;
+  drawerId: string | null;
   settings: RoomSettings;
   phase: GamePhase;
   toasts: ToastMessage[];
@@ -30,6 +31,7 @@ type Action =
         you: { id: string; sessionId: string };
         players: PublicPlayer[];
         hostId: string;
+        drawerId?: string;
         settings: RoomSettings;
         phase: GamePhase;
         name: string;
@@ -39,7 +41,7 @@ type Action =
   | { type: 'PLAYER_LEFT'; payload: { playerId: string; players: PublicPlayer[]; hostId: string } }
   | { type: 'PLAYERS_UPDATED'; payload: { players: PublicPlayer[]; hostId: string } }
   | { type: 'SETTINGS_UPDATED'; payload: { settings: RoomSettings } }
-  | { type: 'SET_PHASE'; payload: GamePhase }
+  | { type: 'SET_GAME_STATE'; payload: { phase: GamePhase; drawerId?: string } }
   | { type: 'ADD_TOAST'; payload: ToastMessage }
   | { type: 'REMOVE_TOAST'; payload: string }
   | { type: 'RESET_ROOM' };
@@ -49,6 +51,7 @@ const initialState: GameState = {
   you: null,
   players: [],
   hostId: null,
+  drawerId: null,
   settings: DEFAULT_SETTINGS,
   phase: 'LOBBY',
   toasts: [],
@@ -71,6 +74,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         },
         players: action.payload.players,
         hostId: action.payload.hostId,
+        drawerId: action.payload.drawerId || null,
         settings: action.payload.settings,
         phase: action.payload.phase,
       };
@@ -101,16 +105,17 @@ function gameReducer(state: GameState, action: Action): GameState {
         settings: action.payload.settings,
       };
 
-    case 'SET_PHASE':
+    case 'SET_GAME_STATE':
       return {
         ...state,
-        phase: action.payload,
+        phase: action.payload.phase,
+        drawerId: action.payload.drawerId !== undefined ? action.payload.drawerId : state.drawerId,
       };
 
     case 'ADD_TOAST':
       return {
         ...state,
-        toasts: [...state.toasts.slice(-4), action.payload], // Keep at most 5 toasts
+        toasts: [...state.toasts.slice(-4), action.payload],
       };
 
     case 'REMOVE_TOAST':
@@ -126,6 +131,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         you: null,
         players: [],
         hostId: null,
+        drawerId: null,
         settings: DEFAULT_SETTINGS,
         phase: 'LOBBY',
       };
@@ -137,11 +143,14 @@ function gameReducer(state: GameState, action: Action): GameState {
 
 interface GameContextType {
   state: GameState;
+  isDrawer: boolean;
   createRoom: (hostName: string, settings: RoomSettings) => void;
   joinRoom: (roomId: string, playerName: string) => void;
   setReady: (ready: boolean) => void;
   updateSettings: (settings: Partial<RoomSettings>) => void;
   startGame: () => void;
+  undoDraw: () => void;
+  clearCanvas: () => void;
   kickPlayer: (playerId: string) => void;
   leaveRoom: () => void;
   addToast: (message: string, type?: 'error' | 'success' | 'info') => void;
@@ -168,12 +177,12 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     dispatch({ type: 'REMOVE_TOAST', payload: id });
   };
 
-  // Socket.IO event registrations
+  const isDrawer = Boolean(state.you && state.drawerId && state.you.id === state.drawerId);
+
   useEffect(() => {
     const onConnect = () => {
       dispatch({ type: 'SET_SOCKET_CONNECTED', payload: true });
 
-      // Attempt automatic reconnection if session data exists in sessionStorage
       const savedSession = sessionStorage.getItem(SESSION_STORAGE_KEY);
       if (savedSession) {
         try {
@@ -205,13 +214,13 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           you: data.you,
           players: data.players,
           hostId: data.hostId,
+          drawerId: data.drawerId,
           settings: data.settings,
           phase: data.phase,
           name: storedName,
         },
       });
 
-      // Save session identifier to sessionStorage (PRD Section 8)
       sessionStorage.setItem(
         SESSION_STORAGE_KEY,
         JSON.stringify({
@@ -221,7 +230,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         })
       );
 
-      // Update URL to /room/:code for seamless sharing/refreshing
       if (window.location.pathname !== `/room/${data.roomId}`) {
         window.history.pushState(null, '', `/room/${data.roomId}`);
       }
@@ -253,8 +261,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       addToast(data.reason || 'You were kicked from the room.', 'error');
     };
 
-    const onGameState = (data: { phase: GamePhase }) => {
-      dispatch({ type: 'SET_PHASE', payload: data.phase });
+    const onGameState = (data: { phase: GamePhase; drawerId?: string }) => {
+      dispatch({
+        type: 'SET_GAME_STATE',
+        payload: {
+          phase: data.phase,
+          drawerId: data.drawerId,
+        },
+      });
     };
 
     const onError = (data: { code: string; message: string }) => {
@@ -290,7 +304,6 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, []);
 
-  // Action dispatchers
   const createRoom = (hostName: string, settings: RoomSettings) => {
     sessionStorage.setItem('dd_last_name', hostName);
     socket.emit('create_room', { hostName, settings });
@@ -325,6 +338,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     socket.emit('start_game');
   };
 
+  const undoDraw = () => {
+    socket.emit('draw_undo');
+  };
+
+  const clearCanvas = () => {
+    socket.emit('canvas_clear');
+  };
+
   const kickPlayer = (playerId: string) => {
     socket.emit('kick_player', { playerId });
   };
@@ -340,11 +361,14 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     <GameContext.Provider
       value={{
         state,
+        isDrawer,
         createRoom,
         joinRoom,
         setReady,
         updateSettings,
         startGame,
+        undoDraw,
+        clearCanvas,
         kickPlayer,
         leaveRoom,
         addToast,

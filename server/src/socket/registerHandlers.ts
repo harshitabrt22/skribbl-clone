@@ -1,8 +1,57 @@
-// Socket.IO event handlers for Room & Lobby management (PRD Section 16.1, 17)
+// Socket.IO event handlers for Room, Lobby, and Real-Time Canvas Drawing (PRD Section 9, 16.1, 16.3, 17)
+
+/**
+ * ==============================================================================
+ * HOW A DRAWING STROKE TRAVELS (MOUSE -> SERVER -> OTHER CLIENTS -> CANVAS):
+ * ==============================================================================
+ *
+ * 1. POINTER EVENT (Drawer Client):
+ *    - Drawer presses down, drags, or releases mouse/touch/stylus on <canvas>.
+ *    - Normalized coordinates (0 to 1) are computed relative to getBoundingClientRect().
+ *    - The drawer renders the line locally and immediately for zero input lag (optimistic UI).
+ *    - On pointer down: client emits `draw_start { x, y, color, size, tool }`.
+ *    - On pointer move: client throttles micro-movements (<0.002) and emits `draw_move { x, y }`.
+ *    - On pointer up: client emits `draw_end {}`.
+ *
+ * 2. SERVER AUTHORIZATION & VALIDATION:
+ *    - Server checks: Does this socket belong to an active room?
+ *    - Server checks: Is the room currently in the DRAWING phase?
+ *    - Server checks: Is this socket the AUTHORIZED DRAWER (`player.id === room.game.drawerId`)?
+ *      Any forged drawing events from guessers/viewers are rejected immediately.
+ *    - Server checks: Are coordinates valid finite numbers within [0, 1]?
+ *    - Server checks: Is color in the approved 12-color palette? Tool in [brush, eraser]? Size in [4, 10, 20]?
+ *    - Server rate-limits `draw_move` to <= 120 events/sec per socket to prevent socket flooding.
+ *
+ * 3. SERVER STATE STORAGE & BROADCAST:
+ *    - Server appends the stroke and its points to `room.game.strokes` in memory.
+ *    - Server broadcasts `draw_data` to `socket.to(room.code)` (everyone in the room EXCEPT
+ *      the drawer, since the drawer already rendered locally).
+ *
+ * 4. REMOTE RENDERING (Guessers / Viewers):
+ *    - Guessers' browsers receive `draw_data`.
+ *    - When type === 'start': initial point is established with specified color and brush size.
+ *    - When type === 'move': a smooth round line segment is rendered onto the 800x600 canvas.
+ *    - When type === 'end': remote stroke is committed to the local strokes list.
+ *
+ * 5. CANVAS SYNCHRONIZATION & UNDO:
+ *    - `draw_undo`: Drawer clicks Undo -> server pops last stroke -> broadcasts `draw_undo` ->
+ *      all clients wipe and redraw remaining strokes.
+ *    - `canvas_clear`: Drawer clicks Clear -> server wipes strokes -> broadcasts `canvas_clear`.
+ *    - Late-joiner / Reconnect: Server sends `canvas_sync { strokes }` so the canvas is restored.
+ * ==============================================================================
+ */
 
 import { Server, Socket } from 'socket.io';
+import crypto from 'crypto';
 import { RoomManager } from '../game/RoomManager';
-import { validateNickname, validateRoomCode, validateSettings } from '../lib/validation';
+import {
+  validateNickname,
+  validateRoomCode,
+  validateSettings,
+  validateDrawStart,
+  validateDrawMove,
+} from '../lib/validation';
+import { drawMoveRateLimiter } from '../lib/rateLimit';
 
 export function registerHandlers(io: Server, socket: Socket, roomManager: RoomManager): void {
   /**
@@ -85,6 +134,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
         hostId: room.hostId,
         settings: room.settings,
         phase: room.phase,
+        drawerId: room.game.drawerId,
       });
 
       // S->others: broadcast player_joined to existing room members
@@ -92,6 +142,13 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
         player: player.toPublic(player.id === room.hostId),
         players: room.getPublicPlayers(),
       });
+
+      // If rejoining while drawing is in progress, sync canvas strokes (PRD Section 9, 16.3)
+      if (room.phase === 'DRAWING') {
+        socket.emit('canvas_sync', {
+          strokes: room.game.getStrokes(),
+        });
+      }
 
       console.log(`[Room] Player "${player.name}" (${player.id}) joined room ${room.code} (reconnect: ${joinResult.isReconnect})`);
     } catch (err) {
@@ -112,7 +169,6 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     const ready = Boolean(payload?.ready);
     room.setReady(player.id, ready);
 
-    // S->room: broadcast updated players list
     io.to(room.code).emit('players_updated', {
       players: room.getPublicPlayers(),
       hostId: room.hostId,
@@ -129,13 +185,13 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
       return sendError(result.errorCode || 'INVALID_SETTINGS', result.errorMessage || 'Failed to update settings.');
     }
 
-    // S->room: broadcast settings_updated
     io.to(room.code).emit('settings_updated', {
       settings: room.settings,
     });
   });
 
   // 5. START GAME (Host only)
+  // Stage 3 test phase: Host is set as drawer, moves room to DRAWING phase (PRD Section 9)
   socket.on('start_game', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
@@ -145,16 +201,139 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
       return sendError('START_FAILED', startCheck.reason || 'Cannot start game.');
     }
 
-    // Stage 2: switch phase to placeholder 'STARTING' and broadcast game_state
-    room.phase = 'STARTING';
+    // Move to DRAWING phase with host as the test drawer
+    room.startDrawingTestPhase();
+
     io.to(room.code).emit('game_state', {
-      phase: 'STARTING',
+      phase: 'DRAWING',
+      drawerId: room.hostId,
     });
 
-    console.log(`[Room] Host started game in room ${room.code}`);
+    // Reset canvas strokes for all clients
+    io.to(room.code).emit('canvas_sync', {
+      strokes: [],
+    });
+
+    console.log(`[Game] Stage 3 Drawing started in room ${room.code}. Drawer: ${player.name} (${room.hostId})`);
   });
 
-  // 6. KICK PLAYER (Host only)
+  // 6. DRAW START (Drawer only)
+  socket.on('draw_start', (payload: unknown) => {
+    const { room, player } = roomManager.lookupSocket(socket.id);
+    if (!room || !player) return;
+
+    // Authorization & Phase check: Only the active drawer in DRAWING phase may draw (PRD Section 17.3)
+    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+      return socket.emit('draw_rejected', { reason: 'Only the current drawer can draw.' });
+    }
+
+    const validation = validateDrawStart(payload);
+    if (!validation.valid || !validation.data) {
+      return socket.emit('draw_rejected', { reason: validation.error || 'Invalid draw start coordinates.' });
+    }
+
+    const { x, y, tool, color, size } = validation.data;
+    const strokeId = `s_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+
+    // Store stroke on server
+    room.game.startStroke(strokeId, tool, color, size, x, y);
+
+    // S->others: Broadcast stroke start to viewers (NOT echoed to drawer, PRD Section 5.2 item 10)
+    socket.to(room.code).emit('draw_data', {
+      type: 'start',
+      strokeId,
+      tool,
+      color,
+      size,
+      x,
+      y,
+    });
+  });
+
+  // 7. DRAW MOVE (Drawer only, rate limited)
+  socket.on('draw_move', (payload: unknown) => {
+    const { room, player } = roomManager.lookupSocket(socket.id);
+    if (!room || !player) return;
+
+    // Authorization & Phase check
+    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+      return;
+    }
+
+    // Rate limiting: drop excess events beyond 120/sec (PRD Section 10)
+    if (!drawMoveRateLimiter.allow(socket.id)) {
+      return;
+    }
+
+    const validation = validateDrawMove(payload);
+    if (!validation.valid || !validation.data) {
+      return;
+    }
+
+    const { x, y } = validation.data;
+    const added = room.game.addPoint(x, y);
+    if (!added) return;
+
+    // S->others: Broadcast new point segment
+    socket.to(room.code).emit('draw_data', {
+      type: 'move',
+      strokeId: room.game.currentStroke?.id,
+      x,
+      y,
+    });
+  });
+
+  // 8. DRAW END (Drawer only)
+  socket.on('draw_end', () => {
+    const { room, player } = roomManager.lookupSocket(socket.id);
+    if (!room || !player) return;
+
+    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+      return;
+    }
+
+    const strokeId = room.game.currentStroke?.id;
+    room.game.endStroke();
+
+    // S->others: Broadcast stroke completion
+    socket.to(room.code).emit('draw_data', {
+      type: 'end',
+      strokeId,
+    });
+  });
+
+  // 9. DRAW UNDO (Drawer only)
+  socket.on('draw_undo', () => {
+    const { room, player } = roomManager.lookupSocket(socket.id);
+    if (!room || !player) return;
+
+    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+      return socket.emit('draw_rejected', { reason: 'Only the current drawer can undo.' });
+    }
+
+    const removedStroke = room.game.undo();
+    if (!removedStroke) return;
+
+    // S->room: Broadcast undo to all clients (including drawer so stroke lists stay synchronized)
+    io.to(room.code).emit('draw_undo', {});
+  });
+
+  // 10. CANVAS CLEAR (Drawer only)
+  socket.on('canvas_clear', () => {
+    const { room, player } = roomManager.lookupSocket(socket.id);
+    if (!room || !player) return;
+
+    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+      return socket.emit('draw_rejected', { reason: 'Only the current drawer can clear the canvas.' });
+    }
+
+    room.game.clear();
+
+    // S->room: Broadcast clear to all clients
+    io.to(room.code).emit('canvas_clear', {});
+  });
+
+  // 11. KICK PLAYER (Host only)
   socket.on('kick_player', (payload: { playerId?: unknown }) => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
@@ -171,12 +350,10 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     const kicked = kickResult.kickedPlayer;
     roomManager.unbindSocket(kicked.socketId);
 
-    // Notify the kicked player directly
     io.to(kicked.socketId).emit('kicked', {
       reason: 'You have been removed from the lobby by the host.',
     });
 
-    // Notify room of player departure
     io.to(room.code).emit('player_left', {
       playerId: kicked.id,
       players: room.getPublicPlayers(),
@@ -186,17 +363,17 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     console.log(`[Room] Host ${player.name} kicked ${kicked.name} from room ${room.code}`);
   });
 
-  // 7. LEAVE ROOM (Voluntary)
+  // 12. LEAVE ROOM
   socket.on('leave_room', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
     socket.leave(room.code);
     roomManager.unbindSocket(socket.id);
+    drawMoveRateLimiter.cleanup(socket.id);
 
     const removal = room.removePlayer(player.id);
 
-    // S->room: broadcast player_left
     io.to(room.code).emit('player_left', {
       playerId: player.id,
       players: room.getPublicPlayers(),
@@ -206,23 +383,23 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     console.log(`[Room] Player ${player.name} left room ${room.code}`);
   });
 
-  // 8. DISCONNECT
+  // 13. DISCONNECT
   socket.on('disconnect', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
     roomManager.unbindSocket(socket.id);
+    drawMoveRateLimiter.cleanup(socket.id);
+
     const result = room.handleDisconnect(socket.id);
 
     if (room.phase === 'LOBBY') {
-      // In lobby, notify others that player left
       io.to(room.code).emit('player_left', {
         playerId: player.id,
         players: room.getPublicPlayers(),
         hostId: result.newHostId || room.hostId,
       });
     } else {
-      // In game, notify that player connection changed
       io.to(room.code).emit('players_updated', {
         players: room.getPublicPlayers(),
         hostId: result.newHostId || room.hostId,

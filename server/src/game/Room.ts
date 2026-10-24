@@ -1,8 +1,9 @@
-// Room model managing players, settings, and room lifecycle (PRD Section 4.2, 7.3, 8)
+// Room model managing players, settings, and room lifecycle (PRD Section 4.2, 7.3, 8, 11)
 
 import crypto from 'crypto';
 import { Player } from './Player';
-import { GamePhase, PublicPlayer, PublicRoomInfo, RoomSettings, DEFAULT_SETTINGS } from '../types';
+import { Game } from './Game';
+import { GamePhase, PublicPlayer, PublicRoomInfo, RoomSettings } from '../types';
 import { validateSettings } from '../lib/validation';
 
 export class Room {
@@ -11,6 +12,7 @@ export class Room {
   public players: Map<string, Player> = new Map();
   public hostId: string = '';
   public phase: GamePhase = 'LOBBY';
+  public game: Game = new Game();
   public emptyTimeout?: NodeJS.Timeout;
   public onDestroy?: (code: string) => void;
 
@@ -145,11 +147,9 @@ export class Room {
     }
 
     if (this.phase === 'LOBBY') {
-      // In lobby, remove immediately
       return this.removePlayer(player.id);
     }
 
-    // In game: mark disconnected and wait 30s before skipping turns
     player.connected = false;
     if (this.hostId === player.id) {
       const nextConnected = Array.from(this.players.values()).find((p) => p.connected);
@@ -255,6 +255,14 @@ export class Room {
   }
 
   /**
+   * Starts Stage 3 drawing test phase with host as the drawer
+   */
+  public startDrawingTestPhase(): void {
+    this.phase = 'DRAWING';
+    this.game.startDrawing(this.hostId);
+  }
+
+  /**
    * Serializes public players array
    */
   public getPublicPlayers(): PublicPlayer[] {
@@ -276,9 +284,6 @@ export class Room {
     };
   }
 
-  /**
-   * Schedules room deletion after 60 seconds if empty (PRD Section 8)
-   */
   private scheduleEmptyTimeout(): void {
     this.cancelEmptyTimeout();
     this.emptyTimeout = setTimeout(() => {
