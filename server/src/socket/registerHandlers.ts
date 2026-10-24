@@ -144,10 +144,10 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
       roomManager.bindSocket(socket.id, room.code, player.id);
       socket.join(room.code);
 
-      // Build word mask for the rejoining player (if mid-drawing)
-      const wordMask = room.game.currentWord
-        ? buildMask(room.game.currentWord, [])
-        : undefined;
+      // Build word mask for the rejoining player (restores current progressive mask: AC-HINT-4)
+      const wordMask = room.game.currentMask || (room.game.currentWord
+        ? buildMask(room.game.currentWord, room.game.revealedIndices, room.settings.wordMode)
+        : undefined);
 
       // S->1: send room_joined to the joining socket
       socket.emit('room_joined', {
@@ -178,6 +178,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
           wordOptions: isDrawer && room.phase === 'WORD_SELECTION' ? room.game.wordOptions : undefined,
           remaining: room.game.drawTimeRemaining,
           total: room.game.drawTimeTotal,
+          hintsRevealed: room.game.hintsRevealedCount,
           players: room.getPublicPlayers(),
         });
 

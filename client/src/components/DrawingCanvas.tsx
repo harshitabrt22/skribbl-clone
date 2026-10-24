@@ -93,7 +93,13 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   // Active stroke being drawn remotely by the drawer (if this client is a viewer)
   const remoteCurrentStroke = useRef<Stroke | null>(null);
 
-  // Initialize canvas on mount and handle high-DPI scaling
+  // Keep a stable ref to onRejectToast so the socket effect doesn't re-run on every render
+  const onRejectToastRef = useRef(onRejectToast);
+  useEffect(() => {
+    onRejectToastRef.current = onRejectToast;
+  }, [onRejectToast]);
+
+  // Initialize canvas on mount and register socket listeners (runs once on mount)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -101,8 +107,12 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Initial white background
-    clearCanvas(ctx);
+    // Preserve existing strokes if already present, otherwise paint initial white background
+    if (strokesRef.current.length > 0) {
+      redrawAllStrokes(ctx, strokesRef.current);
+    } else {
+      clearCanvas(ctx);
+    }
 
     // Socket Event: draw_data (received by viewers)
     const onDrawData = (data: DrawDataPayload) => {
@@ -179,9 +189,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
 
     // Socket Event: draw_rejected (shown as toast to sender)
     const onDrawRejected = (data: { reason: string }) => {
-      if (onRejectToast) {
-        onRejectToast(data.reason);
-      }
+      onRejectToastRef.current?.(data.reason);
     };
 
     socket.on('draw_data', onDrawData);
@@ -197,7 +205,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
       socket.off('canvas_sync', onCanvasSync);
       socket.off('draw_rejected', onDrawRejected);
     };
-  }, [onRejectToast]);
+  }, []);
 
   // 1. POINTER DOWN (Drawer begins a stroke)
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {

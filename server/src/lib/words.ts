@@ -120,27 +120,4 @@ function levenshtein(s: string, t: string): number {
   return dp[m][n];
 }
 
-/**
- * Build the masked word that guessers see, e.g. "_ _ _ _ _" for "castle".
- * Spaces in the original word become a visible gap (extra space).
- * revealedIndices is the list of letter positions (ignoring spaces) already shown.
- *
- * Example: word="ice cream", revealedIndices=[2] → "_ _ _   _ R _ _ _"
- */
-export function buildMask(word: string, revealedIndices: number[]): string {
-  const revealedSet = new Set(revealedIndices);
-  let letterIndex = 0; // counts only non-space characters
-  const parts: string[] = [];
-
-  for (const ch of word) {
-    if (ch === ' ') {
-      parts.push('  '); // double space to visually separate word parts
-    } else {
-      parts.push(revealedSet.has(letterIndex) ? ch.toUpperCase() : '_');
-      letterIndex++;
-    }
-  }
-
-  // Join with spaces between each character for the classic "_ _ _ _" look
-  return parts.join(' ').replace(/   /g, '   '); // keep double space gaps clean
-}
+export { buildMask } from './hints';

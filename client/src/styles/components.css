@@ -219,6 +219,27 @@
   border-left: 8px solid var(--secondary);
 }
 
+@keyframes letterPop {
+  0% {
+    transform: scale(0.6) translateY(-4px);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.15) translateY(0);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.hint-revealed-letter {
+  display: inline-block;
+  animation: letterPop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  color: var(--primary);
+  font-weight: 800;
+}
+
 @keyframes slideIn {
   from {
     transform: translateX(100%);

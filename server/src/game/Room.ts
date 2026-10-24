@@ -272,6 +272,7 @@ export class Room {
     // Lock turn order to current join order (only connected players)
     this.game = new Game(); // fresh game state
     this.game.attachIO(io, this.code);
+    this.game.settings = this.settings;
     this.game.drawTimeTotal = this.settings.drawTime;
 
     // Build turn order from all connected players in join order

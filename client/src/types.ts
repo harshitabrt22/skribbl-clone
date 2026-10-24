@@ -107,3 +107,9 @@ export interface DrawDataPayload {
   size?: number;
   tool?: DrawingTool;
 }
+
+// Progressive hint reveal payload (PRD Section 13.3, 16.2)
+export interface HintUpdatePayload {
+  mask: string;
+  revealedCount: number;
+}

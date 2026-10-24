@@ -8,8 +8,9 @@
 //   4. endTurn(reason)       → phase = ROUND_END, reveal word, fire round_end event
 //   5. nextTurn() / endGame() → advance to next drawer or finish the game
 
-import { GamePhase, Stroke, DrawingTool, BrushSize } from '../types';
-import { pickWords, normalizeGuess, isClose, buildMask } from '../lib/words';
+import { GamePhase, Stroke, DrawingTool, BrushSize, RoomSettings, DEFAULT_SETTINGS } from '../types';
+import { pickWords, normalizeGuess, isClose } from '../lib/words';
+import { calculateEffectiveHints, getHintSchedule, pickHintIndices, buildMask } from '../lib/hints';
 import { calcGuessPoints, DRAWER_POINTS_PER_GUESSER } from '../lib/scoring';
 import { Player } from './Player';
 
@@ -42,6 +43,15 @@ export class Game {
   // ─── Strokes (drawing state) ──────────────────────────────────────────────
   public strokes: Stroke[] = [];
   public currentStroke: Stroke | null = null;
+
+  // ─── Settings ────────────────────────────────────────────────────────────
+  public settings: RoomSettings = DEFAULT_SETTINGS;
+
+  // ─── Hints state (Feature B) ──────────────────────────────────────────────
+  public revealedIndices: Set<number> = new Set();
+  public hintsRevealedCount: number = 0;
+  public currentMask: string = '';
+  private hintTimeouts: ReturnType<typeof setTimeout>[] = [];
 
   // ─── Timer state ──────────────────────────────────────────────────────────
   public drawTimeTotal: number = 80;  // total seconds for this turn (from settings)
@@ -168,14 +178,17 @@ export class Game {
     this.currentStroke = null;
     this.io?.toRoom('canvas_clear', {});
 
-    // Build the initial blank mask: "_ _ _ _ _" or "_ _ _   _ _ _ _ _" for multi-word
-    const blankMask = buildMask(word, []); // no letters revealed yet
+    // Hints setup (PRD Section 13.3)
     const wordLength = word.replace(/\s/g, '').length;
+    const effectiveHints = calculateEffectiveHints(this.settings.hints, word, this.settings.wordMode);
+    this.revealedIndices = new Set();
+    this.hintsRevealedCount = 0;
+    this.currentMask = buildMask(word, this.revealedIndices, this.settings.wordMode);
 
     // Tell the room drawing has started. Never include the word here! (PRD 17.2)
     this.io?.toRoom('drawing_started', {
       drawTime: this.drawTimeTotal,
-      wordMask: blankMask,
+      wordMask: this.currentMask,
       wordLength,
     });
 
@@ -188,15 +201,43 @@ export class Game {
         round: this.round,
         totalRounds,
         drawerId: this.drawerId,
-        wordMask: blankMask,
+        wordMask: this.currentMask,
         wordLength,
         // Drawer sees the actual word; guessers do NOT
         word: isDrawer ? word : undefined,
         remaining: this.drawTimeRemaining,
         total: this.drawTimeTotal,
+        hintsRevealed: this.hintsRevealedCount,
         players: Array.from(players.values()).map((pl) => pl.toPublic(pl.id === hostId)),
         drawerName: drawer?.name,
       });
+    }
+
+    // Schedule progressive hints (Feature B)
+    if (effectiveHints > 0) {
+      const hintOrder = pickHintIndices(wordLength, effectiveHints);
+      const schedule = getHintSchedule(this.drawTimeTotal, effectiveHints);
+
+      for (let k = 0; k < hintOrder.length; k++) {
+        const revealIndex = hintOrder[k];
+        const revealSec = schedule[k];
+        const timeout = setTimeout(() => {
+          if (this.phase !== 'DRAWING') return;
+          this.revealedIndices.add(revealIndex);
+          this.hintsRevealedCount += 1;
+          this.currentMask = buildMask(this.currentWord, this.revealedIndices, this.settings.wordMode);
+
+          const currentDrawer = players.get(this.drawerId);
+          if (currentDrawer) {
+            this.io?.toRoomExcept(currentDrawer.socketId, 'hint_update', {
+              mask: this.currentMask,
+              revealedCount: this.hintsRevealedCount,
+            });
+          }
+        }, revealSec * 1000);
+
+        this.hintTimeouts.push(timeout);
+      }
     }
 
     // Start counting down with a 1-second tick sent to all clients
@@ -440,5 +481,9 @@ export class Game {
     if (this.turnTimer) { clearTimeout(this.turnTimer); this.turnTimer = null; }
     if (this.tickInterval) { clearInterval(this.tickInterval); this.tickInterval = null; }
     if (this.wordSelectTimer) { clearTimeout(this.wordSelectTimer); this.wordSelectTimer = null; }
+    for (const t of this.hintTimeouts) {
+      clearTimeout(t);
+    }
+    this.hintTimeouts = [];
   }
 }

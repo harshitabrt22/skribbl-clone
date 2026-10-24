@@ -42,6 +42,7 @@ interface GameState {
   wordLength: number;             // letter count (for the "(6 letters)" hint)
   word: string | null;            // real word — only set for the drawer
   wordOptions: string[];          // word choices during WORD_SELECTION (drawer only)
+  hintsRevealed: number;          // count of revealed letter hints (Feature B)
   remaining: number;              // timer remaining (seconds)
   totalTime: number;              // total draw time for this turn
 
@@ -95,11 +96,13 @@ type Action =
         players?: PublicPlayer[];
         round?: number;
         totalRounds?: number;
+        hintsRevealed?: number;
       };
     }
   | { type: 'ROUND_START'; payload: { drawerId: string; drawerName: string; drawTime: number; round?: number; totalRounds?: number } }
   | { type: 'WORD_OPTIONS'; payload: { wordOptions: string[] } }
   | { type: 'DRAWING_STARTED'; payload: { wordMask: string; wordLength: number; drawTime: number } }
+  | { type: 'HINT_UPDATE'; payload: { mask: string; revealedCount: number } }
   | { type: 'TIMER_TICK'; payload: { remaining: number } }
   | { type: 'GUESS_RESULT_CORRECT'; payload: { playerId: string; playerName: string; points: number; basePoints: number; streakBonus: number; streak: number } }
   | { type: 'GUESS_RESULT_CLOSE' }
@@ -128,6 +131,7 @@ const initialState: GameState = {
   wordLength: 0,
   word: null,
   wordOptions: [],
+  hintsRevealed: 0,
   remaining: 0,
   totalTime: 80,
   chatEntries: [],
@@ -168,6 +172,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         totalRounds: action.payload.settings.rounds,
         wordMask: null,
         wordOptions: [],
+        hintsRevealed: 0,
       };
 
     case 'PLAYER_JOINED':
@@ -196,6 +201,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         players: action.payload.players ?? state.players,
         round: action.payload.round ?? state.round,
         totalRounds: action.payload.totalRounds ?? state.totalRounds,
+        hintsRevealed: action.payload.hintsRevealed ?? state.hintsRevealed,
       };
 
     case 'ROUND_START':
@@ -209,6 +215,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         totalRounds: action.payload.totalRounds ?? state.totalRounds,
         wordMask: null,
         wordOptions: [],
+        hintsRevealed: 0,
         totalTime: action.payload.drawTime,
         remaining: action.payload.drawTime,
         chatEntries: [], // fresh chat for each turn
@@ -228,8 +235,17 @@ function gameReducer(state: GameState, action: Action): GameState {
         phase: 'DRAWING',
         wordMask: action.payload.wordMask,
         wordLength: action.payload.wordLength,
+        hintsRevealed: 0,
         totalTime: action.payload.drawTime,
         remaining: action.payload.drawTime,
+      };
+
+    case 'HINT_UPDATE':
+      // Feature B: progressive letter hints revealed over time
+      return {
+        ...state,
+        wordMask: action.payload.mask,
+        hintsRevealed: action.payload.revealedCount,
       };
 
     case 'TIMER_TICK':
@@ -315,6 +331,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         totalRounds: action.payload.settings.rounds,
         wordMask: null,
         wordOptions: [],
+        hintsRevealed: 0,
         chatEntries: [],
         roundSummary: null,
         gameOver: null,
@@ -342,6 +359,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         totalRounds: DEFAULT_SETTINGS.rounds,
         wordMask: null,
         wordOptions: [],
+        hintsRevealed: 0,
         chatEntries: [],
         roundSummary: null,
         gameOver: null,
@@ -479,6 +497,11 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       dispatch({ type: 'DRAWING_STARTED', payload: data });
     };
 
+    // hint_update fires to guessers as progressive letter hints are revealed (Feature B)
+    const onHintUpdate = (data: { mask: string; revealedCount: number }) => {
+      dispatch({ type: 'HINT_UPDATE', payload: data });
+    };
+
     const onTimerTick = (data: { remaining: number }) => {
       dispatch({ type: 'TIMER_TICK', payload: data });
     };
@@ -528,6 +551,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     socket.on('round_start', onRoundStart);
     socket.on('word_options', onWordOptions);
     socket.on('drawing_started', onDrawingStarted);
+    socket.on('hint_update', onHintUpdate);
     socket.on('timer_tick', onTimerTick);
     socket.on('guess_result', onGuessResult);
     socket.on('chat_message', onChatMessage);
@@ -551,6 +575,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       socket.off('round_start', onRoundStart);
       socket.off('word_options', onWordOptions);
       socket.off('drawing_started', onDrawingStarted);
+      socket.off('hint_update', onHintUpdate);
       socket.off('timer_tick', onTimerTick);
       socket.off('guess_result', onGuessResult);
       socket.off('chat_message', onChatMessage);

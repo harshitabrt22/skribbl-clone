@@ -12,10 +12,18 @@ interface WordDisplayProps {
   word: string | null;       // the real word (only for the drawer)
   wordMask: string | null;   // e.g. "_ _ _ _ _ _" (for guessers)
   wordLength: number;        // letter count (excluding spaces)
+  hintsRevealed?: number;    // count of letters revealed so far (Feature B)
   phase: string;
 }
 
-export const WordDisplay: React.FC<WordDisplayProps> = ({ isDrawer, word, wordMask, wordLength, phase }) => {
+export const WordDisplay: React.FC<WordDisplayProps> = ({
+  isDrawer,
+  word,
+  wordMask,
+  wordLength,
+  hintsRevealed = 0,
+  phase,
+}) => {
   if (phase === 'WORD_SELECTION') {
     return (
       <div style={{ fontFamily: 'var(--font-heading)', fontSize: '1.1rem', color: 'var(--muted)' }}>
@@ -48,8 +56,14 @@ export const WordDisplay: React.FC<WordDisplayProps> = ({ isDrawer, word, wordMa
   }
 
   // Guesser sees the mask: "_ _ _ _ _ _  (6 letters)"
+  const mask = wordMask || '_ _ _ _ _ _';
+  const ariaLabel = `${wordLength} letters, ${hintsRevealed} revealed`;
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
+    <div
+      style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}
+      aria-label={ariaLabel}
+    >
       <span
         style={{
           fontFamily: 'var(--font-heading)',
@@ -59,11 +73,23 @@ export const WordDisplay: React.FC<WordDisplayProps> = ({ isDrawer, word, wordMa
           color: 'var(--ink)',
         }}
       >
-        {wordMask || '_ _ _ _ _ _'}
+        {mask.split('').map((ch, idx) => {
+          if (ch === ' ') {
+            return <span key={idx}> </span>;
+          }
+          if (ch === '_') {
+            return <span key={idx}>_</span>;
+          }
+          return (
+            <span key={idx} className="hint-revealed-letter">
+              {ch}
+            </span>
+          );
+        })}
       </span>
       {wordLength > 0 && (
         <span style={{ fontSize: '0.8rem', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
-          ({wordLength} letters)
+          ({wordLength} letters{hintsRevealed > 0 ? ` · ${hintsRevealed} hint${hintsRevealed > 1 ? 's' : ''}` : ''})
         </span>
       )}
     </div>

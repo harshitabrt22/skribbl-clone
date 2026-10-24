@@ -96,6 +96,7 @@ export const GameScreen: React.FC = () => {
           word={word}
           wordMask={wordMask}
           wordLength={wordLength}
+          hintsRevealed={state.hintsRevealed}
           phase={phase}
         />
 
