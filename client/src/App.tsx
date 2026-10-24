@@ -1,109 +1,58 @@
-import React, { useEffect, useState } from 'react';
-import { socket } from './socket';
+import React, { useEffect } from 'react';
+import { GameProvider, useGame } from './state/GameContext';
+import { Navbar } from './components/Navbar';
+import { ToastContainer } from './components/ToastContainer';
+import { Landing } from './pages/Landing';
+import { Lobby } from './pages/Lobby';
 
-export const App: React.FC = () => {
-  const [isConnected, setIsConnected] = useState<boolean>(socket.connected);
-  const [socketId, setSocketId] = useState<string | undefined>(socket.id);
+const MainContent: React.FC = () => {
+  const { state, leaveRoom, removeToast } = useGame();
 
+  // Listen to popstate (e.g. user hits back button)
   useEffect(() => {
-    // Handler when socket successfully connects
-    const onConnect = () => {
-      setIsConnected(true);
-      setSocketId(socket.id);
+    const handlePopState = () => {
+      if (window.location.pathname === '/' && state.roomId) {
+        leaveRoom();
+      }
     };
-
-    // Handler when socket disconnects
-    const onDisconnect = () => {
-      setIsConnected(false);
-      setSocketId(undefined);
-    };
-
-    socket.on('connect', onConnect);
-    socket.on('disconnect', onDisconnect);
-
-    // Initial check in case socket connected before listener was registered
-    if (socket.connected) {
-      setIsConnected(true);
-      setSocketId(socket.id);
-    }
-
-    // Cleanup listeners on unmount
-    return () => {
-      socket.off('connect', onConnect);
-      socket.off('disconnect', onDisconnect);
-    };
-  }, []);
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [state.roomId, leaveRoom]);
 
   return (
-    <main
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        padding: 'var(--space-24)',
-        textAlign: 'center',
-      }}
-    >
-      <header style={{ marginBottom: 'var(--space-24)' }}>
-        <h1
-          style={{
-            fontSize: '3rem',
-            color: 'var(--primary)',
-            textShadow: '2px 2px 0 var(--ink)',
-            marginBottom: 'var(--space-8)',
-          }}
-        >
-          Doodle Dash
-        </h1>
-        <p style={{ fontSize: '1.2rem', color: 'var(--muted)' }}>
-          Stage 1: Project Scaffolding Check
-        </p>
-      </header>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      <Navbar
+        connected={state.socketConnected}
+        onHomeClick={state.roomId ? leaveRoom : undefined}
+      />
 
-      <section
+      <main style={{ flex: 1 }}>
+        {state.roomId ? <Lobby /> : <Landing />}
+      </main>
+
+      <ToastContainer toasts={state.toasts} onDismiss={removeToast} />
+
+      <footer
         style={{
-          backgroundColor: 'var(--card)',
-          border: 'var(--border-thick)',
-          borderRadius: 'var(--radius-card)',
-          boxShadow: 'var(--shadow-chunky)',
-          padding: 'var(--space-32)',
-          minWidth: '320px',
+          textAlign: 'center',
+          padding: 'var(--space-16)',
+          borderTop: 'var(--border-thick)',
+          backgroundColor: 'var(--paper)',
+          fontSize: '0.9rem',
+          color: 'var(--muted)',
         }}
       >
-        <h2 style={{ fontSize: '1.5rem', marginBottom: 'var(--space-16)' }}>
-          Socket.IO Handshake
-        </h2>
+        Doodle Dash • Built with React, TypeScript & Socket.IO
+      </footer>
+    </div>
+  );
+};
 
-        <p style={{ fontSize: '1.25rem', marginBottom: 'var(--space-12)' }}>
-          Connected:{' '}
-          <span
-            style={{
-              display: 'inline-block',
-              padding: '2px 12px',
-              borderRadius: 'var(--radius-pill)',
-              border: 'var(--border-thick)',
-              backgroundColor: isConnected ? 'var(--mint)' : 'var(--danger)',
-              color: isConnected ? 'var(--ink)' : '#FFFFFF',
-              fontWeight: 700,
-            }}
-          >
-            {isConnected ? 'yes' : 'no'}
-          </span>
-        </p>
-
-        {socketId ? (
-          <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>
-            Socket ID: <code>{socketId}</code>
-          </p>
-        ) : (
-          <p style={{ fontSize: '0.9rem', color: 'var(--muted)' }}>
-            Waiting for connection...
-          </p>
-        )}
-      </section>
-    </main>
+export const App: React.FC = () => {
+  return (
+    <GameProvider>
+      <MainContent />
+    </GameProvider>
   );
 };
 

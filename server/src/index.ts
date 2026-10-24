@@ -2,6 +2,8 @@ import express, { Request, Response } from 'express';
 import http from 'http';
 import { Server, Socket } from 'socket.io';
 import path from 'path';
+import { roomManager } from './game/RoomManager';
+import { registerHandlers } from './socket/registerHandlers';
 
 // Load port from environment variable (used by Render in production) or default to 3001
 const PORT = process.env.PORT || 3001;
@@ -10,6 +12,9 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Initialize Express app and HTTP server
 const app = express();
 const server = http.createServer(app);
+
+// JSON body parsing for API endpoints
+app.use(express.json());
 
 // Initialize Socket.IO attached to HTTP server.
 // In development, the Vite dev server (port 5173) proxies /socket.io requests to port 3001.
@@ -25,13 +30,16 @@ app.get('/health', (_req: Request, res: Response) => {
   res.status(200).send('ok');
 });
 
-// Socket.IO connection event logging (verifies client handshake)
+// Public rooms listing (PRD Section 8 & 14)
+app.get('/api/rooms/public', (_req: Request, res: Response) => {
+  const publicRooms = roomManager.getPublicRooms();
+  res.json({ rooms: publicRooms });
+});
+
+// Socket.IO connection event logging and handler registration
 io.on('connection', (socket: Socket) => {
   console.log(`[Socket.IO] Client connected: ${socket.id}`);
-
-  socket.on('disconnect', (reason: string) => {
-    console.log(`[Socket.IO] Client disconnected: ${socket.id} (${reason})`);
-  });
+  registerHandlers(io, socket, roomManager);
 });
 
 // In production, serve the built React client from ../client/dist

@@ -1,0 +1,231 @@
+/* Component styling adhering to PRD Section 19.1 ("sticker-book" playful aesthetic) */
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-8);
+  padding: 10px 20px;
+  min-height: 44px;
+  font-family: var(--font-heading);
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-decoration: none;
+  border: var(--border-thick);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-chunky);
+  background-color: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+  user-select: none;
+}
+
+.btn:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: var(--shadow-chunky-hover);
+}
+
+.btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: var(--shadow-chunky-sm);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: var(--shadow-chunky-sm);
+  transform: none;
+}
+
+.btn-primary {
+  background-color: var(--primary);
+  color: var(--primary-ink);
+}
+
+.btn-secondary {
+  background-color: var(--secondary);
+  color: #FFFFFF;
+}
+
+.btn-accent {
+  background-color: var(--accent);
+  color: var(--ink);
+}
+
+.btn-mint {
+  background-color: var(--mint);
+  color: var(--ink);
+}
+
+.btn-danger {
+  background-color: var(--danger);
+  color: #FFFFFF;
+}
+
+.btn-sm {
+  min-height: 34px;
+  padding: 4px 12px;
+  font-size: 0.95rem;
+}
+
+.btn-lg {
+  min-height: 52px;
+  padding: 12px 28px;
+  font-size: 1.3rem;
+}
+
+/* Cards & Containers */
+.card {
+  background-color: var(--card);
+  border: var(--border-thick);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-chunky);
+  padding: var(--space-24);
+}
+
+/* Form Inputs */
+.input-text,
+.input-select {
+  width: 100%;
+  padding: 10px 14px;
+  font-family: var(--font-body);
+  font-size: 1rem;
+  border: var(--border-thick);
+  border-radius: var(--radius-card);
+  background-color: #FFFFFF;
+  color: var(--ink);
+  transition: box-shadow 0.1s ease;
+}
+
+.input-text:focus,
+.input-select:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--secondary);
+}
+
+.form-group {
+  margin-bottom: var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  text-align: left;
+}
+
+.form-label {
+  font-family: var(--font-heading);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  font-family: var(--font-heading);
+  font-size: 0.85rem;
+  font-weight: 700;
+  border: var(--border-thick);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-chunky-sm);
+  text-transform: uppercase;
+}
+
+.badge-host {
+  background-color: var(--accent);
+  color: var(--ink);
+}
+
+.badge-ready {
+  background-color: var(--mint);
+  color: var(--ink);
+}
+
+.badge-unready {
+  background-color: #ECECEC;
+  color: var(--muted);
+}
+
+/* Modal Backdrop & Dialog */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(30, 27, 46, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-16);
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.modal-dialog {
+  background-color: var(--paper);
+  border: var(--border-thick);
+  border-radius: var(--radius-card);
+  box-shadow: 8px 8px 0 var(--ink);
+  padding: var(--space-32);
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+/* Toast Notifications */
+.toast-container {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  z-index: 9999;
+  pointer-events: none;
+}
+
+.toast-item {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: 12px 18px;
+  min-width: 280px;
+  max-width: 420px;
+  background-color: #FFFFFF;
+  border: var(--border-thick);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-chunky);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 600;
+  animation: slideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.toast-item.error {
+  border-left: 8px solid var(--danger);
+}
+
+.toast-item.success {
+  border-left: 8px solid var(--success);
+}
+
+.toast-item.info {
+  border-left: 8px solid var(--secondary);
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
