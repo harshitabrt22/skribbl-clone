@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import http from 'http';
 import { Server, Socket } from 'socket.io';
 import path from 'path';
+import fs from 'fs';
 import { roomManager } from './game/RoomManager';
 import { registerHandlers } from './socket/registerHandlers';
 
@@ -42,15 +43,18 @@ io.on('connection', (socket: Socket) => {
   registerHandlers(io, socket, roomManager);
 });
 
-// In production, serve the built React client from ../client/dist
-if (isProduction) {
-  const clientDistPath = path.resolve(__dirname, '../../client/dist');
+// Serve the built React client from client/dist whenever it exists (PRD Section 20)
+const clientDistPath = path.resolve(__dirname, '../../client/dist');
+if (fs.existsSync(clientDistPath)) {
   app.use(express.static(clientDistPath));
 
   // Fallback for non-API routes so direct navigation/refresh works (e.g. /room/:code)
   app.get('*', (_req: Request, res: Response) => {
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
+  console.log(`[Server] Serving static client assets from: ${clientDistPath}`);
+} else {
+  console.log(`[Server] client/dist not found at ${clientDistPath}; running in API/dev mode`);
 }
 
 // Handle server startup errors gracefully (e.g. port collision / EADDRINUSE)
