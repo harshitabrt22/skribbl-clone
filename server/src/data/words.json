@@ -1,0 +1,41 @@
+{
+  "animals": [
+    "cat", "dog", "elephant", "giraffe", "penguin", "dolphin", "butterfly",
+    "kangaroo", "octopus", "parrot", "zebra", "turtle", "rabbit", "snake",
+    "whale", "eagle", "monkey", "lobster", "flamingo", "hamster", "shark",
+    "crocodile", "jellyfish", "peacock", "squirrel", "koala", "panda",
+    "chameleon", "hedgehog", "starfish", "beetle", "seahorse"
+  ],
+  "objects": [
+    "lamp", "umbrella", "telescope", "bicycle", "guitar", "piano",
+    "scissors", "backpack", "candle", "compass", "envelope", "flashlight",
+    "headphones", "keyboard", "ladder", "microphone", "paintbrush",
+    "suitcase", "toothbrush", "whistle", "anchor", "balloon", "camera",
+    "diamond", "feather", "glasses", "helmet", "kite", "magnet",
+    "pillow", "trophy", "wallet"
+  ],
+  "actions": [
+    "running", "swimming", "dancing", "cooking", "painting", "sleeping",
+    "fishing", "climbing", "singing", "writing", "juggling", "surfing",
+    "skateboarding", "gardening", "bowling", "reading", "knitting",
+    "yawning", "sneezing", "whistling", "waving", "stretching",
+    "laughing", "crying", "jumping", "diving", "hiking", "rowing",
+    "skiing", "cycling", "meditating", "camping"
+  ],
+  "food": [
+    "pizza", "banana", "hamburger", "chocolate", "spaghetti", "pancake",
+    "watermelon", "popcorn", "sandwich", "broccoli", "strawberry",
+    "pineapple", "mushroom", "avocado", "cupcake", "pretzel", "dumpling",
+    "burrito", "waffle", "sushi", "noodles", "lasagna", "omelette",
+    "croissant", "milkshake", "cinnamon", "coconut", "blueberry",
+    "grapefruit", "lollipop", "marshmallow", "tortilla"
+  ],
+  "places": [
+    "castle", "airport", "lighthouse", "hospital", "volcano", "library",
+    "aquarium", "pyramid", "stadium", "classroom", "restaurant",
+    "playground", "waterfall", "skyscraper", "cathedral", "museum",
+    "greenhouse", "submarine", "treehouse", "windmill", "courtyard",
+    "dungeon", "fountain", "harbor", "igloo", "laboratory", "mansion",
+    "observatory", "palace", "rainforest", "spaceship", "theater"
+  ]
+}
