@@ -53,6 +53,16 @@ if (isProduction) {
   });
 }
 
+// Handle server startup errors gracefully (e.g. port collision / EADDRINUSE)
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[Server error] Port ${PORT} is already in use (EADDRINUSE). Please terminate any lingering process on port ${PORT}.`);
+    process.exit(1);
+  } else {
+    console.error('[Server error]', err);
+  }
+});
+
 // Start HTTP and WebSocket listener
 server.listen(PORT, () => {
   console.log(`[Server] Doodle Dash server listening on port ${PORT} (mode: ${process.env.NODE_ENV || 'development'})`);
