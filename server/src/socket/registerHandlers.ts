@@ -1,4 +1,4 @@
-// Socket.IO event handlers for Room, Lobby, and Real-Time Canvas Drawing (PRD Section 9, 16.1, 16.3, 17)
+// Socket.IO event handlers for Room, Lobby, Real-Time Drawing, and Game (PRD Section 9, 16.1, 16.3, 16.4, 17)
 
 /**
  * ==============================================================================
@@ -44,6 +44,7 @@
 import { Server, Socket } from 'socket.io';
 import crypto from 'crypto';
 import { RoomManager } from '../game/RoomManager';
+import { GameIO } from '../game/Game';
 import {
   validateNickname,
   validateRoomCode,
@@ -51,7 +52,8 @@ import {
   validateDrawStart,
   validateDrawMove,
 } from '../lib/validation';
-import { drawMoveRateLimiter } from '../lib/rateLimit';
+import { drawMoveRateLimiter, generalRateLimiter } from '../lib/rateLimit';
+import { buildMask, normalizeGuess } from '../lib/words';
 
 export function registerHandlers(io: Server, socket: Socket, roomManager: RoomManager): void {
   /**
@@ -61,7 +63,26 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     socket.emit('error_message', { code, message });
   };
 
-  // 1. CREATE ROOM
+  /**
+   * Build a GameIO adapter so Game/Room can emit socket events without
+   * importing the Socket.IO server directly (keeps Game.ts clean).
+   *
+   * @param roomCode  The room's Socket.IO room name
+   * @param drawerSocketId  The drawer's socket ID (used for toRoomExcept)
+   */
+  const buildGameIO = (roomCode: string): GameIO => ({
+    toRoom: (event, data) => {
+      io.to(roomCode).emit(event, data);
+    },
+    toSocket: (socketId, event, data) => {
+      io.to(socketId).emit(event, data);
+    },
+    toRoomExcept: (exceptSocketId, event, data) => {
+      io.to(roomCode).except(exceptSocketId).emit(event, data);
+    },
+  });
+
+  // ─── 1. CREATE ROOM ────────────────────────────────────────────────────────
   socket.on('create_room', (payload: { hostName?: unknown; settings?: unknown }) => {
     try {
       const nameVal = validateNickname(payload?.hostName);
@@ -94,7 +115,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     }
   });
 
-  // 2. JOIN ROOM (supports reconnection via sessionId)
+  // ─── 2. JOIN ROOM (supports reconnection via sessionId) ───────────────────
   socket.on('join_room', (payload: { roomId?: unknown; playerName?: unknown; sessionId?: unknown }) => {
     try {
       const codeVal = validateRoomCode(payload?.roomId);
@@ -123,6 +144,11 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
       roomManager.bindSocket(socket.id, room.code, player.id);
       socket.join(room.code);
 
+      // Build word mask for the rejoining player (if mid-drawing)
+      const wordMask = room.game.currentWord
+        ? buildMask(room.game.currentWord, [])
+        : undefined;
+
       // S->1: send room_joined to the joining socket
       socket.emit('room_joined', {
         roomId: room.code,
@@ -136,6 +162,32 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
         phase: room.phase,
         drawerId: room.game.drawerId,
       });
+
+      // Send game_state if rejoining mid-game
+      if (room.phase !== 'LOBBY') {
+        const isDrawer = player.id === room.game.drawerId;
+        socket.emit('game_state', {
+          phase: room.phase,
+          round: room.game.round,
+          totalRounds: room.settings.rounds,
+          drawerId: room.game.drawerId,
+          // Drawer gets the real word; others get the mask (PRD 17.2)
+          word: isDrawer ? room.game.currentWord : undefined,
+          wordMask: isDrawer ? undefined : wordMask,
+          wordLength: room.game.currentWord ? room.game.currentWord.replace(/\s/g, '').length : 0,
+          wordOptions: isDrawer && room.phase === 'WORD_SELECTION' ? room.game.wordOptions : undefined,
+          remaining: room.game.drawTimeRemaining,
+          total: room.game.drawTimeTotal,
+          players: room.getPublicPlayers(),
+        });
+
+        // If drawer rejoins during WORD_SELECTION, also emit word_options
+        if (isDrawer && room.phase === 'WORD_SELECTION' && room.game.wordOptions.length > 0) {
+          socket.emit('word_options', {
+            wordOptions: room.game.wordOptions,
+          });
+        }
+      }
 
       // S->others: broadcast player_joined to existing room members
       socket.to(room.code).emit('player_joined', {
@@ -157,7 +209,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     }
   });
 
-  // 3. SET READY STATE
+  // ─── 3. SET READY STATE ───────────────────────────────────────────────────
   socket.on('set_ready', (payload: { ready?: unknown }) => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
@@ -175,7 +227,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     });
   });
 
-  // 4. UPDATE ROOM SETTINGS (Host only)
+  // ─── 4. UPDATE ROOM SETTINGS (Host only) ─────────────────────────────────
   socket.on('update_settings', (payload: { settings?: unknown }) => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
@@ -190,40 +242,129 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     });
   });
 
-  // 5. START GAME (Host only)
-  // Stage 3 test phase: Host is set as drawer, moves room to DRAWING phase (PRD Section 9)
+  // ─── 5. START GAME (Host only) — Stage 4: Full game flow ─────────────────
   socket.on('start_game', () => {
-    const { room, player } = roomManager.lookupSocket(socket.id);
-    if (!room || !player) return;
+    try {
+      const { room, player } = roomManager.lookupSocket(socket.id);
+      if (!room || !player) return;
 
-    const startCheck = room.canStartGame(player.id);
-    if (!startCheck.canStart) {
-      return sendError('START_FAILED', startCheck.reason || 'Cannot start game.');
+      const startCheck = room.canStartGame(player.id);
+      if (!startCheck.canStart) {
+        return sendError('START_FAILED', startCheck.reason || 'Cannot start game.');
+      }
+
+      // Build the GameIO adapter for this room
+      const gameIO = buildGameIO(room.code);
+
+      // Start the full game: freeze turn order, pick first word options, etc.
+      room.startGame(gameIO);
+
+      console.log(`[Game] Full game started in room ${room.code} by ${player.name}`);
+    } catch (err) {
+      console.error('[Socket] start_game error:', err);
+      sendError('INTERNAL_ERROR', 'Could not start game.');
     }
-
-    // Move to DRAWING phase with host as the test drawer
-    room.startDrawingTestPhase();
-
-    io.to(room.code).emit('game_state', {
-      phase: 'DRAWING',
-      drawerId: room.hostId,
-    });
-
-    // Reset canvas strokes for all clients
-    io.to(room.code).emit('canvas_sync', {
-      strokes: [],
-    });
-
-    console.log(`[Game] Stage 3 Drawing started in room ${room.code}. Drawer: ${player.name} (${room.hostId})`);
   });
 
-  // 6. DRAW START (Drawer only)
+  // ─── 6. WORD CHOSEN (Drawer only, during WORD_SELECTION) ─────────────────
+  // The drawer picks one of the words the server offered them (PRD 12.2, 16.2)
+  socket.on('word_chosen', (payload: { word?: unknown }) => {
+    try {
+      const { room, player } = roomManager.lookupSocket(socket.id);
+      if (!room || !player) return;
+
+      if (room.game.phase !== 'WORD_SELECTION') {
+        return sendError('BAD_PHASE', 'Not in word selection phase.');
+      }
+      if (player.id !== room.game.drawerId) {
+        return sendError('NOT_DRAWER', 'Only the current drawer can choose a word.');
+      }
+
+      const word = typeof payload?.word === 'string' ? payload.word.trim() : '';
+      if (!word) {
+        return sendError('INVALID_PAYLOAD', 'Word must be a non-empty string.');
+      }
+
+      const gameIO = buildGameIO(room.code);
+      const result = room.handleWordChosen(player.id, word, gameIO);
+
+      if (!result.success) {
+        return sendError('INVALID_PAYLOAD', result.error || 'Invalid word choice.');
+      }
+
+      console.log(`[Game] Drawer ${player.name} chose word in room ${room.code}`);
+    } catch (err) {
+      console.error('[Socket] word_chosen error:', err);
+      sendError('INTERNAL_ERROR', 'Could not process word choice.');
+    }
+  });
+
+  // ─── 7. GUESS (any non-drawer player, during DRAWING) ────────────────────
+  // Also serves as the primary chat message for guessers during drawing phase.
+  // The server checks if it's correct/close/wrong and handles each case.
+  socket.on('guess', (payload: { text?: unknown }) => {
+    try {
+      const { room, player } = roomManager.lookupSocket(socket.id);
+      if (!room || !player) return;
+
+      // Rate limit: max 5 guess/chat messages per 3 seconds
+      if (!generalRateLimiter.allow(socket.id)) {
+        return; // silently drop to avoid spamming
+      }
+
+      const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
+      if (!text || text.length < 1 || text.length > 100) return;
+
+      room.handleGuess(player.id, text);
+    } catch (err) {
+      console.error('[Socket] guess error:', err);
+    }
+  });
+
+  // ─── 8. CHAT (general chat outside drawing phase) ────────────────────────
+  socket.on('chat', (payload: { text?: unknown }) => {
+    try {
+      const { room, player } = roomManager.lookupSocket(socket.id);
+      if (!room || !player) return;
+
+      if (!generalRateLimiter.allow(socket.id)) return;
+
+      const text = typeof payload?.text === 'string' ? payload.text.trim() : '';
+      if (!text || text.length < 1 || text.length > 100) return;
+
+      // During DRAWING, route non-drawer messages through the guess handler
+      if (room.phase === 'DRAWING' && player.id !== room.game.drawerId) {
+        room.handleGuess(player.id, text);
+        return;
+      }
+
+      // Block drawer from leaking the secret word in chat during DRAWING
+      if (room.phase === 'DRAWING' && player.id === room.game.drawerId) {
+        const normText = normalizeGuess(text);
+        const normWord = normalizeGuess(room.game.currentWord);
+        if (normWord && normText.includes(normWord)) {
+          return sendError('CHAT_BLOCKED', 'You cannot send the secret word in chat!');
+        }
+      }
+
+      // Outside drawing phase (or drawer chatting): broadcast as normal chat
+      io.to(room.code).emit('chat_message', {
+        playerId: player.id,
+        playerName: player.name,
+        text,
+      });
+    } catch (err) {
+      console.error('[Socket] chat error:', err);
+    }
+  });
+
+  // ─── 9. DRAW START (Drawer only) ─────────────────────────────────────────
   socket.on('draw_start', (payload: unknown) => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
     // Authorization & Phase check: Only the active drawer in DRAWING phase may draw (PRD Section 17.3)
-    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+    if (room.game.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
       return socket.emit('draw_rejected', { reason: 'Only the current drawer can draw.' });
     }
 
@@ -250,13 +391,13 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     });
   });
 
-  // 7. DRAW MOVE (Drawer only, rate limited)
+  // ─── 10. DRAW MOVE (Drawer only, rate limited) ─────────────────────────────
   socket.on('draw_move', (payload: unknown) => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
     // Authorization & Phase check
-    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+    if (room.game.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
       return;
     }
 
@@ -283,12 +424,12 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     });
   });
 
-  // 8. DRAW END (Drawer only)
+  // ─── 11. DRAW END (Drawer only) ────────────────────────────────────────────
   socket.on('draw_end', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
-    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+    if (room.game.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
       return;
     }
 
@@ -302,12 +443,12 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     });
   });
 
-  // 9. DRAW UNDO (Drawer only)
+  // ─── 12. DRAW UNDO (Drawer only) ───────────────────────────────────────────
   socket.on('draw_undo', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
-    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+    if (room.game.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
       return socket.emit('draw_rejected', { reason: 'Only the current drawer can undo.' });
     }
 
@@ -318,12 +459,12 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     io.to(room.code).emit('draw_undo', {});
   });
 
-  // 10. CANVAS CLEAR (Drawer only)
+  // ─── 13. CANVAS CLEAR (Drawer only) ───────────────────────────────────────
   socket.on('canvas_clear', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
-    if (room.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
+    if (room.game.phase !== 'DRAWING' || player.id !== room.game.drawerId) {
       return socket.emit('draw_rejected', { reason: 'Only the current drawer can clear the canvas.' });
     }
 
@@ -333,7 +474,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     io.to(room.code).emit('canvas_clear', {});
   });
 
-  // 11. KICK PLAYER (Host only)
+  // ─── 14. KICK PLAYER (Host only) ──────────────────────────────────────────
   socket.on('kick_player', (payload: { playerId?: unknown }) => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
@@ -363,7 +504,35 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     console.log(`[Room] Host ${player.name} kicked ${kicked.name} from room ${room.code}`);
   });
 
-  // 12. LEAVE ROOM
+  // ─── 15. PLAY AGAIN (Host only, after GAME_OVER) ──────────────────────────
+  socket.on('play_again', () => {
+    try {
+      const { room, player } = roomManager.lookupSocket(socket.id);
+      if (!room || !player) return;
+
+      if (room.phase !== 'GAME_OVER') {
+        return sendError('BAD_PHASE', 'Play Again is only available after the game ends.');
+      }
+      if (player.id !== room.hostId) {
+        return sendError('NOT_HOST', 'Only the host can start a new game.');
+      }
+
+      room.resetForPlayAgain();
+
+      io.to(room.code).emit('room_reset', {
+        phase: 'LOBBY',
+        players: room.getPublicPlayers(),
+        settings: room.settings,
+        hostId: room.hostId,
+      });
+
+      console.log(`[Room] Play Again in room ${room.code}`);
+    } catch (err) {
+      console.error('[Socket] play_again error:', err);
+    }
+  });
+
+  // ─── 16. LEAVE ROOM ───────────────────────────────────────────────────────
   socket.on('leave_room', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
@@ -371,6 +540,10 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     socket.leave(room.code);
     roomManager.unbindSocket(socket.id);
     drawMoveRateLimiter.cleanup(socket.id);
+    generalRateLimiter.cleanup(socket.id);
+
+    const wasDrawer = player.id === room.game.drawerId;
+    const wasInGame = room.phase !== 'LOBBY' && room.phase !== 'GAME_OVER';
 
     const removal = room.removePlayer(player.id);
 
@@ -381,15 +554,31 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     });
 
     console.log(`[Room] Player ${player.name} left room ${room.code}`);
+
+    if (wasInGame) {
+      const gameIO = buildGameIO(room.code);
+      const connected = Array.from(room.players.values()).filter((p) => p.connected);
+      if (connected.length < 2) {
+        room.endGameEarly(gameIO);
+      } else if (wasDrawer) {
+        room.handleDrawerDisconnect(gameIO);
+      } else if (room.phase === 'DRAWING') {
+        room.game.checkEarlyEndIfAllGuessed(room.players, room.hostId, room.settings.rounds);
+      }
+    }
   });
 
-  // 13. DISCONNECT
+  // ─── 17. DISCONNECT ───────────────────────────────────────────────────────
   socket.on('disconnect', () => {
     const { room, player } = roomManager.lookupSocket(socket.id);
     if (!room || !player) return;
 
     roomManager.unbindSocket(socket.id);
     drawMoveRateLimiter.cleanup(socket.id);
+    generalRateLimiter.cleanup(socket.id);
+
+    const wasDrawer = player.id === room.game.drawerId;
+    const wasInGame = room.phase !== 'LOBBY' && room.phase !== 'GAME_OVER';
 
     const result = room.handleDisconnect(socket.id);
 
@@ -404,6 +593,18 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
         players: room.getPublicPlayers(),
         hostId: result.newHostId || room.hostId,
       });
+
+      if (wasInGame) {
+        const gameIO = buildGameIO(room.code);
+        const connected = Array.from(room.players.values()).filter((p) => p.connected);
+        if (connected.length < 2) {
+          room.endGameEarly(gameIO);
+        } else if (wasDrawer) {
+          room.handleDrawerDisconnect(gameIO);
+        } else if (room.phase === 'DRAWING') {
+          room.game.checkEarlyEndIfAllGuessed(room.players, room.hostId, room.settings.rounds);
+        }
+      }
     }
 
     console.log(`[Room] Socket disconnected for player ${player.name} in room ${room.code}`);

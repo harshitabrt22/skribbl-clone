@@ -5,9 +5,10 @@ import { ToastContainer } from './components/ToastContainer';
 import { Landing } from './pages/Landing';
 import { Lobby } from './pages/Lobby';
 import { GameScreen } from './pages/GameScreen';
+import { GameOver } from './pages/GameOver';
 
 const MainContent: React.FC = () => {
-  const { state, leaveRoom, removeToast } = useGame();
+  const { state, leaveRoom, removeToast, playAgain, isHost } = useGame();
 
   // Handle browser back button (popstate)
   useEffect(() => {
@@ -25,9 +26,26 @@ const MainContent: React.FC = () => {
     if (!state.roomId) {
       return <Landing />;
     }
-    if (state.phase === 'DRAWING') {
+
+    // Game over screen
+    if (state.phase === 'GAME_OVER' && state.gameOver) {
+      return (
+        <GameOver
+          winners={state.gameOver.winners}
+          leaderboard={state.gameOver.leaderboard}
+          isHost={isHost}
+          onPlayAgain={playAgain}
+          onLeave={leaveRoom}
+        />
+      );
+    }
+
+    // Active game: drawing, word selection, or round end
+    if (state.phase === 'WORD_SELECTION' || state.phase === 'DRAWING' || state.phase === 'ROUND_END') {
       return <GameScreen />;
     }
+
+    // Lobby (LOBBY phase or before game starts)
     return <Lobby />;
   };
 
@@ -52,7 +70,7 @@ const MainContent: React.FC = () => {
           color: 'var(--muted)',
         }}
       >
-        Doodle Dash • Built with React, TypeScript & Socket.IO
+        Doodle Dash • Built with React, TypeScript &amp; Socket.IO
       </footer>
     </div>
   );

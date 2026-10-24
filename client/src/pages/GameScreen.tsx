@@ -1,33 +1,70 @@
+// GameScreen — the main game UI during WORD_SELECTION and DRAWING phases.
+// 3-column layout: Leaderboard | Canvas + Toolbar | Chat
+// Also shows WordPicker overlay (WORD_SELECTION) and RoundSummary overlay (ROUND_END).
+//
+// PRD: Section 7.4, 7.5
+
 import React, { useState } from 'react';
 import { useGame } from '../state/GameContext';
 import { DrawingCanvas } from '../components/DrawingCanvas';
 import { Toolbar } from '../components/Toolbar';
-import { Avatar } from '../components/Avatar';
+import { WordPicker } from '../components/WordPicker';
+import { WordDisplay } from '../components/WordDisplay';
+import { ChatPanel } from '../components/ChatPanel';
+import { Leaderboard } from '../components/Leaderboard';
+import { RoundSummary } from '../components/RoundSummary';
 import { DrawingTool, BrushSize } from '../types';
 
 export const GameScreen: React.FC = () => {
-  const { state, isDrawer, undoDraw, clearCanvas, leaveRoom, addToast } = useGame();
-  const { roomId, players, drawerId } = state;
+  const { state, isDrawer, undoDraw, clearCanvas, leaveRoom, addToast, chooseWord, sendGuess, sendChat } = useGame();
+  const { players, drawerId, phase, wordMask, wordLength, word, wordOptions, remaining, totalTime, chatEntries, roundSummary } = state;
 
   // Local drawing tool states for the active drawer
   const [currentTool, setCurrentTool] = useState<DrawingTool>('brush');
   const [currentColor, setCurrentColor] = useState<string>('#1E1B2E');
   const [currentSize, setCurrentSize] = useState<BrushSize>(10);
 
+  // Summary is displayed whenever roundSummary is set; cleared by next round_start
+
   const drawerPlayer = players.find((p) => p.id === drawerId);
+  const myPlayer = players.find((p) => p.id === state.you?.id);
+  const hasGuessed = myPlayer?.hasGuessed ?? false;
+
+  // Format timer as MM:SS
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  const timerText = `${minutes}:${String(seconds).padStart(2, '0')}`;
+
+  // Timer color: green → yellow → red as time runs out
+  const timerColor =
+    remaining > totalTime * 0.5
+      ? 'var(--success)'
+      : remaining > totalTime * 0.25
+      ? 'var(--accent)'
+      : 'var(--danger)';
+
+  // Handle chat/guess input
+  const handleSend = (text: string) => {
+    if (phase === 'DRAWING' && !isDrawer) {
+      sendGuess(text);
+    } else {
+      sendChat(text);
+    }
+  };
 
   return (
     <div
       style={{
-        maxWidth: '1100px',
+        maxWidth: 1200,
         margin: '0 auto',
-        padding: 'var(--space-16)',
+        padding: 'var(--space-12) var(--space-16)',
         display: 'flex',
         flexDirection: 'column',
-        gap: 'var(--space-16)',
+        gap: 'var(--space-12)',
+        height: 'calc(100vh - 60px)',
       }}
     >
-      {/* Top Banner: Status & Drawer Indication */}
+      {/* ── Top bar: round info + word display + timer ── */}
       <div
         className="card"
         style={{
@@ -36,57 +73,74 @@ export const GameScreen: React.FC = () => {
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: 'var(--space-12)',
-          padding: 'var(--space-12) var(--space-20)',
-          backgroundColor: isDrawer ? 'var(--mint)' : '#FFFFFF',
+          padding: 'var(--space-10) var(--space-20)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
-          <span style={{ fontSize: '1.8rem' }}>{isDrawer ? '✏️' : '👀'}</span>
-          <div>
-            <h2 style={{ fontSize: '1.3rem', lineHeight: 1.1 }}>
-              {isDrawer
-                ? 'You are Drawing!'
-                : `${drawerPlayer?.name || 'Host'} is Drawing...`}
-            </h2>
-            <span style={{ fontSize: '0.85rem', color: isDrawer ? 'var(--ink)' : 'var(--muted)', fontWeight: 600 }}>
-              {isDrawer
-                ? 'Sketch your idea on the canvas below.'
-                : 'Watch the live canvas strokes in real time!'}
-            </span>
+        {/* Left: round info & who is drawing */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--muted)', fontWeight: 700 }}>
+            Round {state.round} of {state.totalRounds}
+          </span>
+          <div style={{ fontSize: '0.9rem' }}>
+            {isDrawer ? (
+              <span>✏️ <strong>You are drawing!</strong></span>
+            ) : (
+              <span>👀 <strong>{drawerPlayer?.name || '…'}</strong> is drawing</span>
+            )}
           </div>
         </div>
 
+        {/* Center: word display */}
+        <WordDisplay
+          isDrawer={isDrawer}
+          word={word}
+          wordMask={wordMask}
+          wordLength={wordLength}
+          phase={phase}
+        />
+
+        {/* Right: timer + leave */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
-          <span
-            style={{
-              padding: '4px 10px',
-              borderRadius: 'var(--radius-pill)',
-              border: 'var(--border-thick)',
-              backgroundColor: 'var(--card)',
-              fontFamily: 'var(--font-heading)',
-              fontSize: '0.9rem',
-              fontWeight: 700,
-            }}
-          >
-            ROOM: {roomId}
-          </span>
+          {phase === 'DRAWING' && (
+            <span
+              style={{
+                fontFamily: 'var(--font-heading)',
+                fontSize: '1.6rem',
+                fontWeight: 800,
+                color: timerColor,
+                minWidth: 56,
+                textAlign: 'center',
+              }}
+              title="Time remaining"
+            >
+              {timerText}
+            </span>
+          )}
           <button className="btn btn-sm btn-danger" onClick={leaveRoom}>
             Leave
           </button>
         </div>
       </div>
 
-      {/* Main Drawing Area: Canvas + Live Players sidebar */}
+      {/* ── Main 3-column layout ── */}
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '1fr minmax(200px, 260px)',
-          gap: 'var(--space-16)',
-          alignItems: 'start',
+          gridTemplateColumns: '220px 1fr 260px',
+          gap: 'var(--space-12)',
+          flex: 1,
+          minHeight: 0,
         }}
       >
-        {/* Canvas & Drawer Toolbar */}
-        <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+        {/* LEFT: Leaderboard */}
+        <Leaderboard
+          players={players}
+          drawerId={drawerId}
+          myId={state.you?.id ?? null}
+        />
+
+        {/* CENTER: Canvas + Toolbar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
           <DrawingCanvas
             isDrawer={isDrawer}
             currentTool={currentTool}
@@ -94,7 +148,6 @@ export const GameScreen: React.FC = () => {
             currentSize={currentSize}
             onRejectToast={(reason) => addToast(reason, 'error')}
           />
-
           <Toolbar
             isDrawer={isDrawer}
             currentTool={currentTool}
@@ -108,71 +161,34 @@ export const GameScreen: React.FC = () => {
           />
         </div>
 
-        {/* Live Players List */}
-        <aside className="card" style={{ padding: 'var(--space-16)' }}>
-          <h3
-            style={{
-              fontFamily: 'var(--font-heading)',
-              fontSize: '1.2rem',
-              marginBottom: 'var(--space-12)',
-              borderBottom: '2px solid var(--paper)',
-              paddingBottom: 'var(--space-8)',
-            }}
-          >
-            Players ({players.length})
-          </h3>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
-            {players.map((p) => {
-              const isCurrentDrawer = p.id === drawerId;
-              const isYou = p.id === state.you?.id;
-
-              return (
-                <div
-                  key={p.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-card)',
-                    border: 'var(--border-thick)',
-                    backgroundColor: isCurrentDrawer ? 'var(--accent)' : '#FFFFFF',
-                    boxShadow: 'var(--shadow-chunky-sm)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-8)' }}>
-                    <Avatar name={p.name} size={32} connected={p.connected} />
-                    <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>
-                      {p.name} {isYou && '(You)'}
-                    </span>
-                  </div>
-
-                  {isCurrentDrawer && (
-                    <span style={{ fontSize: '1.1rem' }} title="Drawing now">
-                      ✏️
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div
-            style={{
-              marginTop: 'var(--space-16)',
-              padding: 'var(--space-8)',
-              backgroundColor: 'var(--paper)',
-              borderRadius: 'var(--radius-card)',
-              fontSize: '0.85rem',
-              color: 'var(--muted)',
-              textAlign: 'center',
-            }}
-          >
-            Stage 3: Real-Time Drawing Sync
-          </div>
-        </aside>
+        {/* RIGHT: Chat & Guesses */}
+        <ChatPanel
+          entries={chatEntries}
+          isDrawer={isDrawer}
+          hasGuessed={hasGuessed}
+          phase={phase}
+          onSend={handleSend}
+        />
       </div>
+
+      {/* ── WORD_SELECTION overlay ── */}
+      {phase === 'WORD_SELECTION' && (
+        <WordPicker
+          isDrawer={isDrawer}
+          drawerName={drawerPlayer?.name || '…'}
+          wordOptions={wordOptions}
+          onChoose={chooseWord}
+        />
+      )}
+
+      {/* ── ROUND_END overlay ── */}
+      {phase === 'ROUND_END' && roundSummary && (
+        <RoundSummary
+          word={roundSummary.word}
+          reason={roundSummary.reason}
+          scores={roundSummary.scores}
+        />
+      )}
     </div>
   );
 };

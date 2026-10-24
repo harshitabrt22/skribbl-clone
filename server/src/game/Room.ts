@@ -2,7 +2,7 @@
 
 import crypto from 'crypto';
 import { Player } from './Player';
-import { Game } from './Game';
+import { Game, GameIO } from './Game';
 import { GamePhase, PublicPlayer, PublicRoomInfo, RoomSettings } from '../types';
 import { validateSettings } from '../lib/validation';
 
@@ -15,6 +15,14 @@ export class Room {
   public game: Game = new Game();
   public emptyTimeout?: NodeJS.Timeout;
   public onDestroy?: (code: string) => void;
+
+  // Tracks which player in turnOrder is currently drawing
+  // turnOrder is fixed at game start (join order); each round everyone draws once
+  private turnOrderIndex: number = 0;
+  private currentRound: number = 1;
+
+  // After a turn ends, we wait 5 seconds before starting the next (round summary)
+  private nextTurnTimer?: NodeJS.Timeout;
 
   constructor(code: string, initialSettings?: Partial<RoomSettings>, onDestroy?: (code: string) => void) {
     this.code = code;
@@ -255,11 +263,216 @@ export class Room {
   }
 
   /**
-   * Starts Stage 3 drawing test phase with host as the drawer
+   * Start the full game flow (Stage 4).
+   * Freezes turn order, resets scores, and begins word selection for the first drawer.
+   *
+   * @param io   The GameIO interface for emitting socket events
    */
-  public startDrawingTestPhase(): void {
+  public startGame(io: GameIO): void {
+    // Lock turn order to current join order (only connected players)
+    this.game = new Game(); // fresh game state
+    this.game.attachIO(io, this.code);
+    this.game.drawTimeTotal = this.settings.drawTime;
+
+    // Build turn order from all connected players in join order
+    this.game.turnOrder = Array.from(this.players.values())
+      .filter((p) => p.connected)
+      .map((p) => p.id);
+
+    this.currentRound = 1;
+    this.turnOrderIndex = 0;
+    this.phase = 'WORD_SELECTION';
+    this.game.round = this.currentRound;
+
+    // Reset all scores and streaks for a fresh game
+    for (const p of this.players.values()) {
+      p.score = 0;
+      p.streak = 0;
+      p.hasGuessed = false;
+    }
+
+    // Wire up the end-of-turn callback: Room handles what happens after each turn
+    this.game.onTurnEnd = (reason) => {
+      this.phase = 'ROUND_END';
+      // Wait 5 seconds so players can see the round summary, then advance
+      this.nextTurnTimer = setTimeout(() => {
+        this.advanceTurn(io, reason);
+      }, 5000);
+    };
+
+    // Begin the first word selection
+    const firstDrawer = this.players.get(this.game.turnOrder[0]);
+    if (firstDrawer) {
+      this.game.drawerId = firstDrawer.id;
+      this.game.beginWordSelection(
+        firstDrawer,
+        this.settings.wordCount,
+        this.settings.rounds,
+        this.players,
+        this.hostId
+      );
+    }
+
+    console.log(`[Room] Game started in room ${this.code}. Turn order: ${this.game.turnOrder.join(', ')}`);
+  }
+
+  /**
+   * Called when a drawer picks a word (from registerHandlers).
+   * Validates the word is one of the offered options (PRD 12.2).
+   */
+  public handleWordChosen(
+    playerId: string,
+    word: string,
+    io: GameIO
+  ): { success: boolean; error?: string } {
+    if (this.game.phase !== 'WORD_SELECTION') {
+      return { success: false, error: 'Not in word selection phase.' };
+    }
+    if (playerId !== this.game.drawerId) {
+      return { success: false, error: 'Only the current drawer can choose a word.' };
+    }
+    // Security: word must be one of the server-offered options (PRD 12.2)
+    if (!this.game.wordOptions.includes(word)) {
+      return { success: false, error: 'Invalid word choice.' };
+    }
+
     this.phase = 'DRAWING';
-    this.game.startDrawing(this.hostId);
+    this.game.chooseWord(word, this.players, this.hostId, this.settings.rounds);
+    return { success: true };
+  }
+
+  /**
+   * Called when a guesser sends a guess (or any non-drawer chat in DRAWING phase).
+   */
+  public handleGuess(playerId: string, text: string): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    this.game.handleGuess(player, text, this.players, this.hostId, this.settings.rounds);
+  }
+
+  /**
+   * Advance to the next turn after a round ends.
+   * Checks if the game is over; if not, moves to the next drawer.
+   */
+  private advanceTurn(io: GameIO, reason: string): void {
+    // Check if fewer than 2 connected players remain
+    const connected = Array.from(this.players.values()).filter((p) => p.connected);
+    if (connected.length < 2) {
+      console.log(`[Room] Fewer than 2 players connected, ending game early.`);
+      this.endGame(io);
+      return;
+    }
+
+    // Find the next connected player in turn order
+    let foundNextDrawer = false;
+    while (!foundNextDrawer) {
+      this.turnOrderIndex += 1;
+      if (this.turnOrderIndex >= this.game.turnOrder.length) {
+        this.turnOrderIndex = 0;
+        this.currentRound += 1;
+      }
+
+      if (this.currentRound > this.settings.rounds) {
+        this.endGame(io);
+        return;
+      }
+
+      const candidateId = this.game.turnOrder[this.turnOrderIndex];
+      const candidate = this.players.get(candidateId);
+      if (candidate && candidate.connected) {
+        foundNextDrawer = true;
+      }
+    }
+
+    // Start next word selection
+    this.phase = 'WORD_SELECTION';
+    this.game.round = this.currentRound;
+
+    const nextDrawer = this.players.get(this.game.turnOrder[this.turnOrderIndex])!;
+    this.game.drawerId = nextDrawer.id;
+    this.game.beginWordSelection(
+      nextDrawer,
+      this.settings.wordCount,
+      this.settings.rounds,
+      this.players,
+      this.hostId
+    );
+  }
+
+  /**
+   * Ends game early if fewer than 2 connected players remain
+   */
+  public endGameEarly(io: GameIO): void {
+    if (this.phase !== 'GAME_OVER' && this.phase !== 'LOBBY') {
+      this.endGame(io);
+    }
+  }
+
+  /**
+   * End the game and send the leaderboard to all players.
+   */
+  private endGame(io: GameIO): void {
+    this.phase = 'GAME_OVER';
+    this.game.phase = 'GAME_OVER';
+    this.game.clearTimers();
+
+    // Sort players by score (descending) for the leaderboard
+    const sorted = Array.from(this.players.values()).sort((a, b) => b.score - a.score);
+
+    // Find winner(s) — ties are allowed
+    const topScore = sorted[0]?.score ?? 0;
+    const winners = sorted.filter((p) => p.score === topScore).map((p) => p.name);
+
+    const leaderboard = sorted.map((p, i) => ({
+      rank: i + 1,
+      playerId: p.id,
+      playerName: p.name,
+      score: p.score,
+    }));
+
+    // Adjust ranks for ties (same score → same rank)
+    for (let i = 1; i < leaderboard.length; i++) {
+      if (leaderboard[i].score === leaderboard[i - 1].score) {
+        leaderboard[i].rank = leaderboard[i - 1].rank;
+      }
+    }
+
+    io.toRoom('game_over', {
+      winner: winners.length === 1 ? winners[0] : null,
+      winners,
+      leaderboard,
+      players: sorted.map((p) => p.toPublic(p.id === this.hostId)),
+    });
+
+    console.log(`[Room] Game over in room ${this.code}. Winner(s): ${winners.join(', ')}`);
+  }
+
+  /**
+   * Handle drawer disconnection mid-turn: end the turn early.
+   */
+  public handleDrawerDisconnect(io: GameIO): void {
+    if (this.game.phase === 'DRAWING' || this.game.phase === 'WORD_SELECTION') {
+      this.game.endTurn('drawer_left', this.players, this.hostId, this.settings.rounds);
+    }
+  }
+
+  /**
+   * Reset the room back to LOBBY for a "Play Again" (PRD Section 6.11)
+   */
+  public resetForPlayAgain(): void {
+    this.game.clearTimers();
+    if (this.nextTurnTimer) { clearTimeout(this.nextTurnTimer); this.nextTurnTimer = undefined; }
+    this.game = new Game();
+    this.phase = 'LOBBY';
+    this.currentRound = 1;
+    this.turnOrderIndex = 0;
+
+    for (const p of this.players.values()) {
+      p.score = 0;
+      p.streak = 0;
+      p.hasGuessed = false;
+      p.ready = p.id === this.hostId; // host is auto-ready, others need to re-ready
+    }
   }
 
   /**
@@ -302,6 +515,8 @@ export class Room {
 
   public clearAllTimers(): void {
     this.cancelEmptyTimeout();
+    this.game.clearTimers();
+    if (this.nextTurnTimer) { clearTimeout(this.nextTurnTimer); this.nextTurnTimer = undefined; }
     for (const player of this.players.values()) {
       if (player.disconnectTimeout) {
         clearTimeout(player.disconnectTimeout);
