@@ -1,0 +1,54 @@
+/* Design Tokens from PRD Section 19.1 ("sticker-book" playful aesthetic) */
+:root {
+  /* Surface and ink colors */
+  --paper: #FFF7E8;
+  --card: #FFFFFF;
+  --ink: #1E1B2E;
+
+  /* Theme accent colors */
+  --primary: #FF6B4A;
+  --primary-ink: #FFFFFF;
+  --secondary: #4C6FFF;
+  --accent: #FFD23F;
+  --mint: #2ED3A3;
+  --success: #1FB86B;
+  --danger: #E5484D;
+  --muted: #6B6880;
+
+  /* 12 Drawing Palette Colors (PRD 19.1) */
+  --palette-black: #1E1B2E;
+  --palette-white: #FFFFFF;
+  --palette-red: #E5484D;
+  --palette-orange: #FF8A3D;
+  --palette-yellow: #FFD23F;
+  --palette-mint: #2ED3A3;
+  --palette-green: #1FB86B;
+  --palette-blue: #4C6FFF;
+  --palette-purple: #8E5CFF;
+  --palette-pink: #FF7EB6;
+  --palette-brown: #8B5E3C;
+  --palette-gray: #9AA0A6;
+
+  /* Typography scale */
+  --font-heading: 'Baloo 2', cursive, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* Spacing */
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+
+  /* Border radius */
+  --radius-card: 12px;
+  --radius-pill: 999px;
+
+  /* Chunky sticker-book outlines and offset shadows */
+  --border-thick: 2px solid var(--ink);
+  --shadow-chunky: 4px 4px 0 var(--ink);
+  --shadow-chunky-sm: 2px 2px 0 var(--ink);
+  --shadow-chunky-hover: 6px 6px 0 var(--ink);
+}

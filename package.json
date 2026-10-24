@@ -1,0 +1,17 @@
+{
+  "name": "doodle-dash",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multiplayer drawing & guessing game (skribbl.io clone)",
+  "scripts": {
+    "dev": "concurrently \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client install --include=dev && npm --prefix client run build && npm --prefix server install --include=dev && npm --prefix server run build",
+    "start": "node server/dist/index.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
