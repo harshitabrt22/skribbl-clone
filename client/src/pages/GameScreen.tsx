@@ -4,7 +4,7 @@
 //
 // PRD: Section 7.4, 7.5
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useGame } from '../state/GameContext';
 import { DrawingCanvas } from '../components/DrawingCanvas';
 import { Toolbar } from '../components/Toolbar';
@@ -15,6 +15,13 @@ import { Leaderboard } from '../components/Leaderboard';
 import { RoundSummary } from '../components/RoundSummary';
 import { DrawingTool, BrushSize } from '../types';
 
+const CHALLENGE_EMOJIS: Record<string, string> = {
+  TWO_COLORS: '🎨',
+  ONE_STROKE: '✍️',
+  SPEED_DRAW: '⚡',
+  HONOR_NO_LETTERS: '🚫',
+};
+
 export const GameScreen: React.FC = () => {
   const { state, isDrawer, undoDraw, clearCanvas, leaveRoom, addToast, chooseWord, sendGuess, sendChat } = useGame();
   const { players, drawerId, phase, wordMask, wordLength, word, wordOptions, remaining, totalTime, chatEntries, roundSummary } = state;
@@ -23,6 +30,26 @@ export const GameScreen: React.FC = () => {
   const [currentTool, setCurrentTool] = useState<DrawingTool>('brush');
   const [currentColor, setCurrentColor] = useState<string>('#1E1B2E');
   const [currentSize, setCurrentSize] = useState<BrushSize>(10);
+
+  // Track colors used in the current turn (for TWO_COLORS challenge)
+  const [usedColors, setUsedColors] = useState<string[]>([]);
+
+  // Reset usedColors on new turn or phase change
+  useEffect(() => {
+    if (phase === 'WORD_SELECTION' || phase === 'STARTING') {
+      setUsedColors([]);
+    }
+  }, [phase, state.round]);
+
+  const handleStrokeStart = (color: string, tool: DrawingTool) => {
+    if (tool === 'brush') {
+      setUsedColors((prev) => {
+        const upper = color.toUpperCase();
+        if (prev.some((c) => c.toUpperCase() === upper)) return prev;
+        return [...prev, color];
+      });
+    }
+  };
 
   // Summary is displayed whenever roundSummary is set; cleared by next round_start
 
@@ -91,14 +118,43 @@ export const GameScreen: React.FC = () => {
         </div>
 
         {/* Center: word display */}
-        <WordDisplay
-          isDrawer={isDrawer}
-          word={word}
-          wordMask={wordMask}
-          wordLength={wordLength}
-          hintsRevealed={state.hintsRevealed}
-          phase={phase}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+          <WordDisplay
+            isDrawer={isDrawer}
+            word={word}
+            wordMask={wordMask}
+            wordLength={wordLength}
+            hintsRevealed={state.hintsRevealed}
+            phase={phase}
+          />
+          {/* Challenge badge (PRD 7.4, 13.4) */}
+          {phase === 'DRAWING' && state.activeChallenge && (
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '3px 10px',
+                borderRadius: 999,
+                backgroundColor: state.activeChallenge.enforced ? 'rgba(255, 107, 74, 0.12)' : 'rgba(255, 210, 63, 0.25)',
+                border: `1.5px solid ${state.activeChallenge.enforced ? 'var(--primary)' : 'var(--ink)'}`,
+                fontSize: '0.78rem',
+                fontWeight: 700,
+              }}
+              title={state.activeChallenge.description}
+            >
+              <span>{CHALLENGE_EMOJIS[state.activeChallenge.id] || '🃏'}</span>
+              <span>{state.activeChallenge.title}</span>
+              {state.activeChallenge.enforced ? (
+                <span style={{ fontSize: '0.7rem', color: 'var(--primary)', marginLeft: 2 }}>+25</span>
+              ) : (
+                <span style={{ fontSize: '0.65rem', backgroundColor: 'var(--ink)', color: '#fff', padding: '1px 5px', borderRadius: 4 }}>
+                  HONOR
+                </span>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Right: timer + leave */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-12)' }}>
@@ -148,12 +204,15 @@ export const GameScreen: React.FC = () => {
             currentColor={currentColor}
             currentSize={currentSize}
             onRejectToast={(reason) => addToast(reason, 'error')}
+            onStrokeStart={handleStrokeStart}
           />
           <Toolbar
             isDrawer={isDrawer}
             currentTool={currentTool}
             currentColor={currentColor}
             currentSize={currentSize}
+            activeChallenge={state.activeChallenge}
+            usedColors={usedColors}
             onToolChange={setCurrentTool}
             onColorChange={setCurrentColor}
             onSizeChange={setCurrentSize}
@@ -178,6 +237,7 @@ export const GameScreen: React.FC = () => {
           isDrawer={isDrawer}
           drawerName={drawerPlayer?.name || '…'}
           wordOptions={wordOptions}
+          challengeOffer={state.challengeOffer}
           onChoose={chooseWord}
         />
       )}
@@ -188,6 +248,8 @@ export const GameScreen: React.FC = () => {
           word={roundSummary.word}
           reason={roundSummary.reason}
           scores={roundSummary.scores}
+          challengeBonus={roundSummary.challengeBonus}
+          challenge={roundSummary.challenge}
         />
       )}
     </div>

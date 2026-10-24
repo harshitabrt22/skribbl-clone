@@ -24,6 +24,16 @@ export const DEFAULT_SETTINGS: RoomSettings = {
   challengesEnabled: true,
 };
 
+export type ChallengeId = 'TWO_COLORS' | 'ONE_STROKE' | 'SPEED_DRAW' | 'HONOR_NO_LETTERS';
+
+export interface ChallengeCardInfo {
+  id: ChallengeId;
+  title: string;
+  description: string;
+  enforced: boolean;
+  reward?: number;
+}
+
 export type GamePhase =
   | 'LOBBY'
   | 'STARTING'

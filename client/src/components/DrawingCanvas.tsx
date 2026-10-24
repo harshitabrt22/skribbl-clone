@@ -72,6 +72,7 @@ interface DrawingCanvasProps {
   currentColor: string;
   currentSize: BrushSize;
   onRejectToast?: (reason: string) => void;
+  onStrokeStart?: (color: string, tool: DrawingTool) => void;
 }
 
 export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
@@ -80,6 +81,7 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   currentColor,
   currentSize,
   onRejectToast,
+  onStrokeStart,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -93,11 +95,16 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
   // Active stroke being drawn remotely by the drawer (if this client is a viewer)
   const remoteCurrentStroke = useRef<Stroke | null>(null);
 
-  // Keep a stable ref to onRejectToast so the socket effect doesn't re-run on every render
+  // Keep a stable ref to onRejectToast and onStrokeStart so the socket effect doesn't re-run on every render
   const onRejectToastRef = useRef(onRejectToast);
   useEffect(() => {
     onRejectToastRef.current = onRejectToast;
   }, [onRejectToast]);
+
+  const onStrokeStartRef = useRef(onStrokeStart);
+  useEffect(() => {
+    onStrokeStartRef.current = onStrokeStart;
+  }, [onStrokeStart]);
 
   // Initialize canvas on mount and register socket listeners (runs once on mount)
   useEffect(() => {
@@ -223,6 +230,9 @@ export const DrawingCanvas: React.FC<DrawingCanvasProps> = ({
     isDrawingLocally.current = true;
     const point = getNormalizedCoords(e, canvas);
     localLastPoint.current = point;
+
+    // Notify parent of stroke start (for tracking usedColors in challenges)
+    onStrokeStartRef.current?.(currentColor, currentTool);
 
     // Optimistic local render: draw dot immediately
     drawDot(ctx, point, currentColor, currentSize, currentTool);

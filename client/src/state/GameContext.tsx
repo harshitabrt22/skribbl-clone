@@ -6,7 +6,7 @@
 
 import React, { createContext, useContext, useEffect, useReducer, ReactNode } from 'react';
 import { socket } from '../socket';
-import { GamePhase, PublicPlayer, RoomSettings, DEFAULT_SETTINGS, ToastMessage } from '../types';
+import { GamePhase, PublicPlayer, RoomSettings, DEFAULT_SETTINGS, ToastMessage, ChallengeCardInfo } from '../types';
 import { ChatEntry } from '../components/ChatPanel';
 
 interface You {
@@ -43,6 +43,8 @@ interface GameState {
   word: string | null;            // real word — only set for the drawer
   wordOptions: string[];          // word choices during WORD_SELECTION (drawer only)
   hintsRevealed: number;          // count of revealed letter hints (Feature B)
+  challengeOffer: ChallengeCardInfo | null; // Challenge card offered to drawer (Feature A)
+  activeChallenge: ChallengeCardInfo | null; // Challenge active during this turn (Feature A)
   remaining: number;              // timer remaining (seconds)
   totalTime: number;              // total draw time for this turn
 
@@ -53,7 +55,9 @@ interface GameState {
   roundSummary: {
     word: string;
     reason: 'time' | 'all_guessed' | 'drawer_left';
-    scores: { playerId: string; playerName: string; total: number }[];
+    scores: { playerId: string; playerName: string; total: number; challengeBonus?: number }[];
+    challengeBonus?: number;
+    challenge?: ChallengeCardInfo;
   } | null;
 
   // Game over data
@@ -97,17 +101,19 @@ type Action =
         round?: number;
         totalRounds?: number;
         hintsRevealed?: number;
+        challenge?: ChallengeCardInfo;
+        challengeOffer?: ChallengeCardInfo;
       };
     }
   | { type: 'ROUND_START'; payload: { drawerId: string; drawerName: string; drawTime: number; round?: number; totalRounds?: number } }
-  | { type: 'WORD_OPTIONS'; payload: { wordOptions: string[] } }
-  | { type: 'DRAWING_STARTED'; payload: { wordMask: string; wordLength: number; drawTime: number } }
+  | { type: 'WORD_OPTIONS'; payload: { wordOptions: string[]; challengeOffer?: ChallengeCardInfo } }
+  | { type: 'DRAWING_STARTED'; payload: { wordMask: string; wordLength: number; drawTime: number; challenge?: ChallengeCardInfo } }
   | { type: 'HINT_UPDATE'; payload: { mask: string; revealedCount: number } }
   | { type: 'TIMER_TICK'; payload: { remaining: number } }
   | { type: 'GUESS_RESULT_CORRECT'; payload: { playerId: string; playerName: string; points: number; basePoints: number; streakBonus: number; streak: number } }
   | { type: 'GUESS_RESULT_CLOSE' }
   | { type: 'CHAT_MESSAGE'; payload: { playerId: string; playerName: string; text: string } }
-  | { type: 'ROUND_END'; payload: { word: string; reason: 'time' | 'all_guessed' | 'drawer_left'; scores: { playerId: string; playerName: string; total: number }[]; players: PublicPlayer[] } }
+  | { type: 'ROUND_END'; payload: { word: string; reason: 'time' | 'all_guessed' | 'drawer_left'; scores: { playerId: string; playerName: string; total: number; challengeBonus?: number }[]; players: PublicPlayer[]; challengeBonus?: number; challenge?: ChallengeCardInfo } }
   | { type: 'CLEAR_ROUND_SUMMARY' }
   | { type: 'GAME_OVER'; payload: { winners: string[]; leaderboard: LeaderboardEntry[]; players: PublicPlayer[] } }
   | { type: 'ROOM_RESET'; payload: { phase: GamePhase; players: PublicPlayer[]; settings: RoomSettings; hostId: string } }
@@ -132,6 +138,8 @@ const initialState: GameState = {
   word: null,
   wordOptions: [],
   hintsRevealed: 0,
+  challengeOffer: null,
+  activeChallenge: null,
   remaining: 0,
   totalTime: 80,
   chatEntries: [],
@@ -173,6 +181,8 @@ function gameReducer(state: GameState, action: Action): GameState {
         wordMask: null,
         wordOptions: [],
         hintsRevealed: 0,
+        challengeOffer: null,
+        activeChallenge: null,
       };
 
     case 'PLAYER_JOINED':
@@ -202,6 +212,8 @@ function gameReducer(state: GameState, action: Action): GameState {
         round: action.payload.round ?? state.round,
         totalRounds: action.payload.totalRounds ?? state.totalRounds,
         hintsRevealed: action.payload.hintsRevealed ?? state.hintsRevealed,
+        challengeOffer: action.payload.challengeOffer ?? state.challengeOffer,
+        activeChallenge: action.payload.challenge ?? state.activeChallenge,
       };
 
     case 'ROUND_START':
@@ -216,6 +228,8 @@ function gameReducer(state: GameState, action: Action): GameState {
         wordMask: null,
         wordOptions: [],
         hintsRevealed: 0,
+        challengeOffer: null,
+        activeChallenge: null,
         totalTime: action.payload.drawTime,
         remaining: action.payload.drawTime,
         chatEntries: [], // fresh chat for each turn
@@ -223,10 +237,11 @@ function gameReducer(state: GameState, action: Action): GameState {
       };
 
     case 'WORD_OPTIONS':
-      // Drawer only: server sends the word choices
+      // Drawer only: server sends the word choices and challenge offer
       return {
         ...state,
         wordOptions: action.payload.wordOptions,
+        challengeOffer: action.payload.challengeOffer ?? null,
       };
 
     case 'DRAWING_STARTED':
@@ -236,6 +251,7 @@ function gameReducer(state: GameState, action: Action): GameState {
         wordMask: action.payload.wordMask,
         wordLength: action.payload.wordLength,
         hintsRevealed: 0,
+        activeChallenge: action.payload.challenge ?? null,
         totalTime: action.payload.drawTime,
         remaining: action.payload.drawTime,
       };
@@ -301,6 +317,8 @@ function gameReducer(state: GameState, action: Action): GameState {
           word: action.payload.word,
           reason: action.payload.reason,
           scores: action.payload.scores,
+          challengeBonus: action.payload.challengeBonus,
+          challenge: action.payload.challenge,
         },
       };
 
@@ -332,6 +350,8 @@ function gameReducer(state: GameState, action: Action): GameState {
         wordMask: null,
         wordOptions: [],
         hintsRevealed: 0,
+        challengeOffer: null,
+        activeChallenge: null,
         chatEntries: [],
         roundSummary: null,
         gameOver: null,
@@ -360,6 +380,8 @@ function gameReducer(state: GameState, action: Action): GameState {
         wordMask: null,
         wordOptions: [],
         hintsRevealed: 0,
+        challengeOffer: null,
+        activeChallenge: null,
         chatEntries: [],
         roundSummary: null,
         gameOver: null,
@@ -383,7 +405,7 @@ interface GameContextType {
   clearCanvas: () => void;
   kickPlayer: (playerId: string) => void;
   leaveRoom: () => void;
-  chooseWord: (word: string) => void;
+  chooseWord: (word: string, acceptChallenge?: boolean) => void;
   sendGuess: (text: string) => void;
   sendChat: (text: string) => void;
   playAgain: () => void;
@@ -487,13 +509,13 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       dispatch({ type: 'ROUND_START', payload: data });
     };
 
-    // word_options fires to the drawer only — the secret word choices
-    const onWordOptions = (data: { wordOptions: string[] }) => {
+    // word_options fires to the drawer only — the secret word choices and optional challenge card
+    const onWordOptions = (data: { wordOptions: string[]; challengeOffer?: ChallengeCardInfo }) => {
       dispatch({ type: 'WORD_OPTIONS', payload: data });
     };
 
     // drawing_started fires when the drawer picks a word and drawing begins
-    const onDrawingStarted = (data: { wordMask: string; wordLength: number; drawTime: number }) => {
+    const onDrawingStarted = (data: { wordMask: string; wordLength: number; drawTime: number; challenge?: ChallengeCardInfo }) => {
       dispatch({ type: 'DRAWING_STARTED', payload: data });
     };
 
@@ -621,8 +643,9 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     window.history.pushState(null, '', '/');
   };
 
-  // Drawer picks a word during WORD_SELECTION
-  const chooseWord = (word: string) => socket.emit('word_chosen', { word });
+  // Drawer picks a word during WORD_SELECTION (optional challenge acceptance)
+  const chooseWord = (word: string, acceptChallenge?: boolean) =>
+    socket.emit('word_chosen', { word, acceptChallenge: Boolean(acceptChallenge) });
 
   // Guesser sends a guess (or any chat during drawing)
   const sendGuess = (text: string) => socket.emit('guess', { text });

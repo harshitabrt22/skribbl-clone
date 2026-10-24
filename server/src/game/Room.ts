@@ -324,6 +324,7 @@ export class Room {
   public handleWordChosen(
     playerId: string,
     word: string,
+    acceptChallenge: boolean,
     io: GameIO
   ): { success: boolean; error?: string } {
     if (this.game.phase !== 'WORD_SELECTION') {
@@ -338,7 +339,7 @@ export class Room {
     }
 
     this.phase = 'DRAWING';
-    this.game.chooseWord(word, this.players, this.hostId, this.settings.rounds);
+    this.game.chooseWord(word, acceptChallenge, this.players, this.hostId, this.settings.rounds);
     return { success: true };
   }
 

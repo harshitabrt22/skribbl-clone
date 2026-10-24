@@ -11,6 +11,17 @@
 import { GamePhase, Stroke, DrawingTool, BrushSize, RoomSettings, DEFAULT_SETTINGS } from '../types';
 import { pickWords, normalizeGuess, isClose } from '../lib/words';
 import { calculateEffectiveHints, getHintSchedule, pickHintIndices, buildMask } from '../lib/hints';
+import {
+  getRandomChallenge,
+  ActiveChallengeState,
+  ChallengeCard,
+  calcChallengeBonus,
+  calcTurnDrawTime,
+  validateDrawStartChallenge,
+  recordStrokeInChallenge,
+  validateUndoChallenge,
+  validateClearChallenge,
+} from '../lib/challenges';
 import { calcGuessPoints, DRAWER_POINTS_PER_GUESSER } from '../lib/scoring';
 import { Player } from './Player';
 
@@ -46,6 +57,10 @@ export class Game {
 
   // ─── Settings ────────────────────────────────────────────────────────────
   public settings: RoomSettings = DEFAULT_SETTINGS;
+
+  // ─── Challenge Cards (Feature A) ──────────────────────────────────────────
+  public offeredChallenge: ChallengeCard | null = null;
+  public activeChallenge: ActiveChallengeState | null = null;
 
   // ─── Hints state (Feature B) ──────────────────────────────────────────────
   public revealedIndices: Set<number> = new Set();
@@ -106,6 +121,10 @@ export class Game {
     this.currentWord = '';
     this.wordOptions = pickWords(wordCount, this.usedWords);
 
+    // Feature A: Offer a challenge card to drawer if challenges enabled (PRD 13.4)
+    this.offeredChallenge = this.settings.challengesEnabled ? getRandomChallenge() : null;
+    this.activeChallenge = null;
+
     // Reset hasGuessed for all players at the start of each turn
     for (const p of players.values()) {
       p.hasGuessed = false;
@@ -121,12 +140,13 @@ export class Game {
       wordSelectTime: 15,
     });
 
-    // Send ONLY wordOptions to the drawer's socket (secrecy! PRD 17.2)
+    // Send ONLY wordOptions + challenge offer to the drawer's socket (secrecy! PRD 17.2, 13.4)
     this.io?.toSocket(drawer.socketId, 'word_options', {
       wordOptions: this.wordOptions,
+      challengeOffer: this.offeredChallenge || undefined,
     });
 
-    // Send game_state to every player — drawer gets the word options info,
+    // Send game_state to every player — drawer gets the word options info + challenge offer,
     // guessers see the phase change only (no word yet)
     for (const p of players.values()) {
       const isDrawer = p.id === drawer.id;
@@ -135,17 +155,18 @@ export class Game {
         round: this.round,
         totalRounds,
         drawerId: drawer.id,
-        // Drawer sees their options; guessers see nothing
+        // Drawer sees their options and challenge offer; guessers see nothing
         wordOptions: isDrawer ? this.wordOptions : undefined,
+        challengeOffer: isDrawer ? (this.offeredChallenge || undefined) : undefined,
         players: Array.from(players.values()).map((pl) => pl.toPublic(pl.id === hostId)),
       });
     }
 
-    // Auto-pick the first word if the drawer doesn't choose within 15 seconds
+    // Auto-pick the first word if the drawer doesn't choose within 15 seconds (skip challenge by default)
     this.wordSelectTimer = setTimeout(() => {
       if (this.phase === 'WORD_SELECTION' && this.wordOptions.length > 0) {
         console.log(`[Game] Auto-picking word for drawer ${drawer.name}`);
-        this.chooseWord(this.wordOptions[0], players, hostId, totalRounds);
+        this.chooseWord(this.wordOptions[0], false, players, hostId, totalRounds);
       }
     }, 15000);
   }
@@ -154,11 +175,13 @@ export class Game {
    * Called when the drawer picks a word (or server auto-picks after timeout).
    * Transitions to the DRAWING phase and starts the draw timer.
    *
-   * @param word       The chosen word (must be one of the options)
-   * @param players    All players (for building per-player game_state)
+   * @param word             The chosen word (must be one of the options)
+   * @param acceptChallenge  Whether the drawer accepted the challenge card
+   * @param players          All players (for building per-player game_state)
    */
   public chooseWord(
     word: string,
+    acceptChallenge: boolean,
     players: Map<string, Player>,
     hostId: string,
     totalRounds: number
@@ -168,6 +191,20 @@ export class Game {
 
     clearTimeout(this.wordSelectTimer!);
     this.wordSelectTimer = null;
+
+    // Feature A: activate challenge if accepted
+    if (acceptChallenge && this.offeredChallenge) {
+      this.activeChallenge = {
+        card: this.offeredChallenge,
+        accepted: true,
+        usedColors: new Set(),
+        strokeCount: 0,
+      };
+      this.drawTimeTotal = calcTurnDrawTime(this.settings.drawTime, this.activeChallenge);
+    } else {
+      this.activeChallenge = null;
+      this.drawTimeTotal = this.settings.drawTime;
+    }
 
     this.currentWord = word;
     this.phase = 'DRAWING';
@@ -185,11 +222,12 @@ export class Game {
     this.hintsRevealedCount = 0;
     this.currentMask = buildMask(word, this.revealedIndices, this.settings.wordMode);
 
-    // Tell the room drawing has started. Never include the word here! (PRD 17.2)
+    // Tell the room drawing has started (broadcasts challenge if accepted: PRD 13.4, 16.2)
     this.io?.toRoom('drawing_started', {
       drawTime: this.drawTimeTotal,
       wordMask: this.currentMask,
       wordLength,
+      challenge: this.activeChallenge?.accepted ? this.activeChallenge.card : undefined,
     });
 
     // Send per-player game_state: drawer gets the real word, guessers get the mask
@@ -208,6 +246,7 @@ export class Game {
         remaining: this.drawTimeRemaining,
         total: this.drawTimeTotal,
         hintsRevealed: this.hintsRevealedCount,
+        challenge: this.activeChallenge?.accepted ? this.activeChallenge.card : undefined,
         players: Array.from(players.values()).map((pl) => pl.toPublic(pl.id === hostId)),
         drawerName: drawer?.name,
       });
@@ -367,6 +406,14 @@ export class Game {
     this.phase = 'ROUND_END';
     this.clearTimers();
 
+    // Feature A: Challenge reward (+25 if accepted, enforced, and >= 1 guesser)
+    const challengeBonus = calcChallengeBonus(this.activeChallenge, this.correctGuessers.size);
+    const drawer = players.get(this.drawerId);
+    if (drawer && challengeBonus > 0) {
+      drawer.score += challengeBonus;
+      console.log(`[Game] Challenge reward awarded: +${challengeBonus} to drawer ${drawer.name}`);
+    }
+
     // Reset streaks for all connected players who were eligible (not drawer) but didn't guess
     for (const p of players.values()) {
       if (p.id !== this.drawerId && p.connected && !this.correctGuessers.has(p.id)) {
@@ -379,6 +426,7 @@ export class Game {
       playerId: p.id,
       playerName: p.name,
       total: p.score,
+      challengeBonus: p.id === this.drawerId ? challengeBonus : 0,
     }));
 
     // If word wasn't picked yet (e.g. drawer left during WORD_SELECTION), use first option
@@ -389,6 +437,8 @@ export class Game {
       word: revealedWord,
       reason,
       scores,
+      challengeBonus: challengeBonus > 0 ? challengeBonus : undefined,
+      challenge: this.activeChallenge?.accepted ? this.activeChallenge.card : undefined,
       players: Array.from(players.values()).map((p) => p.toPublic(p.id === hostId)),
     });
 
@@ -399,16 +449,29 @@ export class Game {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STROKE MANAGEMENT (same as Stage 3 — unchanged)
+  // STROKE MANAGEMENT (Feature A rules validated here)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /** Start a new stroke on the server */
-  public startStroke(id: string, tool: DrawingTool, color: string, size: BrushSize, x: number, y: number): Stroke {
+  /** Start a new stroke on the server (validates challenge restrictions) */
+  public startStroke(
+    id: string,
+    tool: DrawingTool,
+    color: string,
+    size: BrushSize,
+    x: number,
+    y: number
+  ): { stroke: Stroke | null; error?: string } {
+    const challengeValidation = validateDrawStartChallenge(this.activeChallenge, tool, color);
+    if (!challengeValidation.valid) {
+      return { stroke: null, error: challengeValidation.reason };
+    }
+    recordStrokeInChallenge(this.activeChallenge, tool, color);
+
     const stroke: Stroke = { id, tool, color, size, points: [{ x, y }] };
     if (this.strokes.length >= 1000) this.strokes.shift();
     this.strokes.push(stroke);
     this.currentStroke = stroke;
-    return stroke;
+    return { stroke };
   }
 
   /** Append a point to the active stroke */
@@ -424,16 +487,25 @@ export class Game {
     this.currentStroke = null;
   }
 
-  /** Undo: remove the last stroke */
-  public undo(): Stroke | undefined {
+  /** Undo: remove the last stroke (blocked for ONE_STROKE) */
+  public undo(): { stroke: Stroke | null; error?: string } {
+    const challengeValidation = validateUndoChallenge(this.activeChallenge);
+    if (!challengeValidation.valid) {
+      return { stroke: null, error: challengeValidation.reason };
+    }
     this.currentStroke = null;
-    return this.strokes.pop();
+    return { stroke: this.strokes.pop() || null };
   }
 
-  /** Clear all strokes */
-  public clear(): void {
+  /** Clear all strokes (blocked for ONE_STROKE) */
+  public clear(): { success: boolean; error?: string } {
+    const challengeValidation = validateClearChallenge(this.activeChallenge);
+    if (!challengeValidation.valid) {
+      return { success: false, error: challengeValidation.reason };
+    }
     this.strokes = [];
     this.currentStroke = null;
+    return { success: true };
   }
 
   /** Get all strokes (for canvas_sync on reconnect) */

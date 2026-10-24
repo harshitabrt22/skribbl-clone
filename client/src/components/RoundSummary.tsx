@@ -4,11 +4,13 @@
 // PRD: Section 7.5, 16.2 (round_end event)
 
 import React from 'react';
+import { ChallengeCardInfo } from '../types';
 
 interface ScoreEntry {
   playerId: string;
   playerName: string;
   total: number;
+  challengeBonus?: number;
 }
 
 interface RoundSummaryProps {
@@ -16,9 +18,18 @@ interface RoundSummaryProps {
   reason: 'time' | 'all_guessed' | 'drawer_left';
   scores: ScoreEntry[];
   nextDrawerName?: string;
+  challengeBonus?: number;
+  challenge?: ChallengeCardInfo;
 }
 
-export const RoundSummary: React.FC<RoundSummaryProps> = ({ word, reason, scores, nextDrawerName }) => {
+export const RoundSummary: React.FC<RoundSummaryProps> = ({
+  word,
+  reason,
+  scores,
+  nextDrawerName,
+  challengeBonus,
+  challenge,
+}) => {
   // Human-readable end reason
   const reasonText =
     reason === 'all_guessed'
@@ -50,9 +61,27 @@ export const RoundSummary: React.FC<RoundSummaryProps> = ({ word, reason, scores
       >
         <div style={{ fontSize: '2.5rem', marginBottom: 'var(--space-8)' }}>📝</div>
         <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: 4 }}>{reasonText}</p>
-        <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.8rem', marginBottom: 'var(--space-24)' }}>
+        <h2 style={{ fontFamily: 'var(--font-heading)', fontSize: '1.8rem', marginBottom: 'var(--space-20)' }}>
           The word was: <span style={{ color: 'var(--primary)' }}>{word}</span>
         </h2>
+
+        {/* Feature A: Challenge bonus notification (PRD 13.4) */}
+        {challengeBonus && challengeBonus > 0 && challenge && (
+          <div
+            style={{
+              marginBottom: 'var(--space-16)',
+              padding: 'var(--space-8) var(--space-12)',
+              borderRadius: 8,
+              backgroundColor: 'rgba(255, 107, 74, 0.1)',
+              border: '1.5px solid var(--primary)',
+              color: 'var(--primary)',
+              fontSize: '0.85rem',
+              fontWeight: 700,
+            }}
+          >
+            🎯 Challenge bonus +{challengeBonus} ({challenge.title})
+          </div>
+        )}
 
         {/* Score list — top guessers */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 'var(--space-16)' }}>
@@ -62,6 +91,7 @@ export const RoundSummary: React.FC<RoundSummaryProps> = ({ word, reason, scores
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
+                alignItems: 'center',
                 padding: '6px 12px',
                 borderRadius: 8,
                 backgroundColor: 'var(--paper)',
@@ -69,7 +99,14 @@ export const RoundSummary: React.FC<RoundSummaryProps> = ({ word, reason, scores
               }}
             >
               <span style={{ fontWeight: 600 }}>{s.playerName}</span>
-              <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{s.total} pts</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                {s.challengeBonus && s.challengeBonus > 0 ? (
+                  <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>
+                    (+{s.challengeBonus} card)
+                  </span>
+                ) : null}
+                <span style={{ fontWeight: 700, color: 'var(--primary)' }}>{s.total} pts</span>
+              </div>
             </div>
           ))}
         </div>

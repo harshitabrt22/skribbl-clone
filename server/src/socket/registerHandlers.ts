@@ -179,6 +179,8 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
           remaining: room.game.drawTimeRemaining,
           total: room.game.drawTimeTotal,
           hintsRevealed: room.game.hintsRevealedCount,
+          challenge: room.game.activeChallenge?.accepted ? room.game.activeChallenge.card : undefined,
+          challengeOffer: isDrawer && room.phase === 'WORD_SELECTION' ? room.game.offeredChallenge || undefined : undefined,
           players: room.getPublicPlayers(),
         });
 
@@ -186,6 +188,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
         if (isDrawer && room.phase === 'WORD_SELECTION' && room.game.wordOptions.length > 0) {
           socket.emit('word_options', {
             wordOptions: room.game.wordOptions,
+            challengeOffer: room.game.offeredChallenge || undefined,
           });
         }
       }
@@ -269,7 +272,7 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
 
   // ─── 6. WORD CHOSEN (Drawer only, during WORD_SELECTION) ─────────────────
   // The drawer picks one of the words the server offered them (PRD 12.2, 16.2)
-  socket.on('word_chosen', (payload: { word?: unknown }) => {
+  socket.on('word_chosen', (payload: { word?: unknown; acceptChallenge?: unknown }) => {
     try {
       const { room, player } = roomManager.lookupSocket(socket.id);
       if (!room || !player) return;
@@ -286,8 +289,9 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
         return sendError('INVALID_PAYLOAD', 'Word must be a non-empty string.');
       }
 
+      const acceptChallenge = Boolean(payload?.acceptChallenge);
       const gameIO = buildGameIO(room.code);
-      const result = room.handleWordChosen(player.id, word, gameIO);
+      const result = room.handleWordChosen(player.id, word, acceptChallenge, gameIO);
 
       if (!result.success) {
         return sendError('INVALID_PAYLOAD', result.error || 'Invalid word choice.');
@@ -377,8 +381,11 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
     const { x, y, tool, color, size } = validation.data;
     const strokeId = `s_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
 
-    // Store stroke on server
-    room.game.startStroke(strokeId, tool, color, size, x, y);
+    // Store stroke on server (checks challenge restrictions: AC-CH-2, AC-CH-3)
+    const strokeResult = room.game.startStroke(strokeId, tool, color, size, x, y);
+    if (!strokeResult.stroke) {
+      return socket.emit('draw_rejected', { reason: strokeResult.error || 'Stroke rejected.' });
+    }
 
     // S->others: Broadcast stroke start to viewers (NOT echoed to drawer, PRD Section 5.2 item 10)
     socket.to(room.code).emit('draw_data', {
@@ -453,8 +460,11 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
       return socket.emit('draw_rejected', { reason: 'Only the current drawer can undo.' });
     }
 
-    const removedStroke = room.game.undo();
-    if (!removedStroke) return;
+    const undoResult = room.game.undo();
+    if (undoResult.error) {
+      return socket.emit('draw_rejected', { reason: undoResult.error });
+    }
+    if (!undoResult.stroke) return;
 
     // S->room: Broadcast undo to all clients (including drawer so stroke lists stay synchronized)
     io.to(room.code).emit('draw_undo', {});
@@ -469,7 +479,10 @@ export function registerHandlers(io: Server, socket: Socket, roomManager: RoomMa
       return socket.emit('draw_rejected', { reason: 'Only the current drawer can clear the canvas.' });
     }
 
-    room.game.clear();
+    const clearResult = room.game.clear();
+    if (!clearResult.success) {
+      return socket.emit('draw_rejected', { reason: clearResult.error || 'Clear rejected.' });
+    }
 
     // S->room: Broadcast clear to all clients
     io.to(room.code).emit('canvas_clear', {});
