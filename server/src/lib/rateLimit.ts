@@ -49,3 +49,6 @@ export class RateLimiter {
 
 // Global rate limiter for draw_move events (120 moves per second per socket)
 export const drawMoveRateLimiter = new RateLimiter(120, 1000);
+
+// Rate limiter for guess/chat events (5 messages per 3 seconds per socket, PRD Section 10)
+export const generalRateLimiter = new RateLimiter(5, 3000);
