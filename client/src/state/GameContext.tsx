@@ -500,6 +500,7 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // hint_update fires to guessers as progressive letter hints are revealed (Feature B)
     const onHintUpdate = (data: { mask: string; revealedCount: number }) => {
       dispatch({ type: 'HINT_UPDATE', payload: data });
+      addToast(`💡 Hint: Letter #${data.revealedCount} revealed!`, 'info');
     };
 
     const onTimerTick = (data: { remaining: number }) => {

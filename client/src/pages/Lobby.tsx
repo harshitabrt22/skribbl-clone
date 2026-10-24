@@ -274,7 +274,9 @@ export const Lobby: React.FC = () => {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Hints: {editSettings.hints}</label>
+                  <label className="form-label">
+                    Hints: <strong>{editSettings.hints === 0 ? '0 (Disabled)' : `${editSettings.hints} per turn`}</strong>
+                  </label>
                   <input
                     type="range"
                     min={0}

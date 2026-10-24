@@ -148,7 +148,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
           {/* Hints (0-5) */}
           <div className="form-group">
             <label className="form-label">
-              Hints: <strong>{settings.hints}</strong>
+              Hints: <strong>{settings.hints === 0 ? '0 (Disabled)' : `${settings.hints} per turn`}</strong>
             </label>
             <input
               type="range"

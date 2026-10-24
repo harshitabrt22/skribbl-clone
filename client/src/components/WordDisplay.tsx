@@ -75,13 +75,17 @@ export const WordDisplay: React.FC<WordDisplayProps> = ({
       >
         {mask.split('').map((ch, idx) => {
           if (ch === ' ') {
-            return <span key={idx}> </span>;
+            return <span key={`space_${idx}`}> </span>;
           }
           if (ch === '_') {
-            return <span key={idx}>_</span>;
+            return (
+              <span key={`blank_${idx}`} className="hint-blank">
+                _
+              </span>
+            );
           }
           return (
-            <span key={idx} className="hint-revealed-letter">
+            <span key={`letter_${idx}_${ch}`} className="hint-revealed-letter">
               {ch}
             </span>
           );
