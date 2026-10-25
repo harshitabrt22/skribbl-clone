@@ -264,3 +264,160 @@
     opacity: 1;
   }
 }
+
+/* ── Responsive Game Layout (PRD Section 19.2) ── */
+.game-screen-wrapper {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-height: calc(100vh - 60px);
+}
+
+.game-top-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-10) var(--space-20);
+}
+
+.toolbar-container {
+  margin-top: var(--space-8);
+  padding: var(--space-12) var(--space-16);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  background-color: #FFFFFF;
+}
+
+/* 1. Above 1100px: 3-column desktop layout */
+@media (min-width: 1101px) {
+  .game-screen-wrapper {
+    height: calc(100vh - 60px);
+  }
+
+  .game-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr 260px;
+    grid-template-areas: "leaderboard canvas chat";
+    gap: var(--space-12);
+    flex: 1;
+    min-height: 0;
+  }
+
+  .game-area-leaderboard {
+    grid-area: leaderboard;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .game-area-canvas {
+    grid-area: canvas;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    min-height: 0;
+    width: 100%;
+  }
+
+  .game-area-chat {
+    grid-area: chat;
+    min-height: 0;
+    height: 100%;
+  }
+}
+
+/* 2. Between 700px and 1100px: canvas on top, leaderboard and chat side by side below */
+@media (min-width: 700px) and (max-width: 1100px) {
+  .game-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "canvas canvas"
+      "leaderboard chat";
+    gap: var(--space-12);
+    flex: 1;
+  }
+
+  .game-area-canvas {
+    grid-area: canvas;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    width: 100%;
+  }
+
+  .game-area-leaderboard {
+    grid-area: leaderboard;
+    height: 380px;
+    min-height: 0;
+  }
+
+  .game-area-chat {
+    grid-area: chat;
+    height: 380px;
+    min-height: 0;
+  }
+}
+
+/* 3. Under 700px: one column (Top bar -> Canvas full width -> Toolbar scrollable -> Chat -> Leaderboard) */
+@media (max-width: 699px) {
+  .game-screen-wrapper {
+    padding: var(--space-8);
+    gap: var(--space-8);
+    min-height: auto;
+  }
+
+  .game-top-bar {
+    padding: var(--space-8) var(--space-12) !important;
+    gap: var(--space-8) !important;
+  }
+
+  .game-layout {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-10);
+    width: 100%;
+  }
+
+  .game-area-canvas {
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-8);
+    width: 100%;
+  }
+
+  .game-area-chat {
+    order: 2;
+    width: 100%;
+    height: 360px;
+  }
+
+  .game-area-leaderboard {
+    order: 3;
+    width: 100%;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .toolbar-container {
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    justify-content: flex-start !important;
+    padding: var(--space-8) var(--space-12) !important;
+    gap: var(--space-8) !important;
+    width: 100%;
+  }
+
+  .toolbar-container > * {
+    flex-shrink: 0;
+  }
+}

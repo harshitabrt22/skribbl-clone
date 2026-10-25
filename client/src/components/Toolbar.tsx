@@ -54,17 +54,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
   return (
     <div
-      className="card"
-      style={{
-        marginTop: 'var(--space-12)',
-        padding: 'var(--space-12) var(--space-16)',
-        display: 'flex',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 'var(--space-12)',
-        backgroundColor: '#FFFFFF',
-      }}
+      className="card toolbar-container"
     >
       {/* 1. Tool Selection: Brush vs Eraser */}
       <div style={{ display: 'flex', gap: 'var(--space-8)' }}>

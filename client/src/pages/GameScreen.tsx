@@ -80,29 +80,9 @@ export const GameScreen: React.FC = () => {
   };
 
   return (
-    <div
-      style={{
-        maxWidth: 1200,
-        margin: '0 auto',
-        padding: 'var(--space-12) var(--space-16)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 'var(--space-12)',
-        height: 'calc(100vh - 60px)',
-      }}
-    >
+    <div className="game-screen-wrapper">
       {/* ── Top bar: round info + word display + timer ── */}
-      <div
-        className="card"
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 'var(--space-12)',
-          padding: 'var(--space-10) var(--space-20)',
-        }}
-      >
+      <div className="card game-top-bar">
         {/* Left: round info & who is drawing */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <span style={{ fontSize: '0.8rem', color: 'var(--muted)', fontWeight: 700 }}>
@@ -179,25 +159,19 @@ export const GameScreen: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Main 3-column layout ── */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '220px 1fr 260px',
-          gap: 'var(--space-12)',
-          flex: 1,
-          minHeight: 0,
-        }}
-      >
+      {/* ── Main layout (responsive: 3-col >1100px, 2-row 700-1100px, 1-col <700px) ── */}
+      <div className="game-layout">
         {/* LEFT: Leaderboard */}
-        <Leaderboard
-          players={players}
-          drawerId={drawerId}
-          myId={state.you?.id ?? null}
-        />
+        <div className="game-area-leaderboard">
+          <Leaderboard
+            players={players}
+            drawerId={drawerId}
+            myId={state.you?.id ?? null}
+          />
+        </div>
 
         {/* CENTER: Canvas + Toolbar */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-8)' }}>
+        <div className="game-area-canvas">
           <DrawingCanvas
             isDrawer={isDrawer}
             currentTool={currentTool}
@@ -222,13 +196,15 @@ export const GameScreen: React.FC = () => {
         </div>
 
         {/* RIGHT: Chat & Guesses */}
-        <ChatPanel
-          entries={chatEntries}
-          isDrawer={isDrawer}
-          hasGuessed={hasGuessed}
-          phase={phase}
-          onSend={handleSend}
-        />
+        <div className="game-area-chat">
+          <ChatPanel
+            entries={chatEntries}
+            isDrawer={isDrawer}
+            hasGuessed={hasGuessed}
+            phase={phase}
+            onSend={handleSend}
+          />
+        </div>
       </div>
 
       {/* ── WORD_SELECTION overlay ── */}
