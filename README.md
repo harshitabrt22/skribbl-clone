@@ -6,8 +6,8 @@
 
 ## 🌐 Live URL
 
-* **Production URL:** `https://doodle-dash.onrender.com` *(Placeholder: deploy to Render via the instructions below)*
-* **Health Check:** `https://doodle-dash.onrender.com/health`
+* **Production URL:** `https://skribbl-clone-1qyw.onrender.com`
+* **Health Check:** `https://skribbl-clone-1qyw.onrender.com/health`
 
 > **Note on Free-Tier Hosting:** Render free web services automatically spin down after inactivity. On initial visit after a period of idleness, please allow ~30–50 seconds for the service to wake up.
 
